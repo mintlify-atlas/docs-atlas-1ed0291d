@@ -1,0 +1,390 @@
+---
+title: "AI Chat and Agents API: Messages, Conversations, and Agent Management"
+sidebarTitle: "AI & Agents"
+description: "REST endpoints for the AI chat assistant and custom agent management. Send messages, list conversations, and manage agent catalogs and assignments."
+---
+
+The AI module provides a conversational assistant powered by GitHub Models (gpt-4o-mini) with a fallback to a mock responder. Each user can chat with the global default agent or with any agent that has been individually assigned to them by an administrator. Conversations are scoped to a `(user, agent)` pair, so switching agents starts a fresh conversation thread. A rate limit of **50 messages per day** per user is enforced. Agents are managed under the `/admin/agents` namespace (ADMIN role required) while users interact via `/chat` and `/agents/available`.
+
+**Base URL:** `https://mejoragemeseg-production.up.railway.app`
+
+**Authentication:** All endpoints require `Authorization: Bearer <jwt_token>`.
+
+---
+
+## Chat
+
+### POST /chat/message
+
+Sends a message to the AI assistant. The assistant's context is determined by the agent specified (or the global default if none). Optionally continues an existing conversation by passing `conversationId`.
+
+**Authentication:** Required
+
+**Rate limit:** 50 messages per day per user.
+
+#### Request Body
+
+<ParamField body="message" type="string" required>
+  The user's message text to send to the AI assistant.
+</ParamField>
+
+<ParamField body="context" type="string" required>
+  Page or feature context from the frontend, used to focus the assistant's responses (e.g. `"custodias"`, `"dashboard"`, `"cacao/receptions"`).
+</ParamField>
+
+<ParamField body="conversationId" type="number">
+  ID of an existing conversation to continue. If omitted, a new conversation is started.
+</ParamField>
+
+<ParamField body="agentId" type="number">
+  ID of the agent to use. Defaults to the global agent (the one with no `createdBy`).
+</ParamField>
+
+#### Response
+
+<ResponseField name="reply" type="string">
+  The AI assistant's response text.
+</ResponseField>
+
+<ResponseField name="conversationId" type="number">
+  The conversation ID — either the existing one passed in or the newly created one.
+</ResponseField>
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/chat/message \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "¿Cuántas custodias tipo HACIENDA se realizaron este mes?",
+    "context": "custodias",
+    "agentId": 1
+  }'
+```
+
+#### Example Response
+
+```json
+{
+  "reply": "Este mes se han registrado 14 custodias de tipo HACIENDA, de las cuales 11 han llegado a su destino.",
+  "conversationId": 38
+}
+```
+
+---
+
+### GET /chat/conversations
+
+Returns the list of conversations for the authenticated user, optionally filtered by agent.
+
+**Authentication:** Required
+
+#### Query Parameters
+
+<ParamField query="agentId" type="number">
+  Filter conversations by agent ID. Returns only conversations with this agent.
+</ParamField>
+
+#### Response
+
+<ResponseField name="[].id" type="number">
+  Conversation ID.
+</ResponseField>
+
+<ResponseField name="[].agentId" type="number">
+  ID of the agent used in this conversation.
+</ResponseField>
+
+<ResponseField name="[].agent" type="object">
+  Nested agent object with `id`, `name`, and `scope`.
+</ResponseField>
+
+<ResponseField name="[].createdAt" type="string">
+  Timestamp when the conversation was created.
+</ResponseField>
+
+<ResponseField name="[].updatedAt" type="string">
+  Timestamp of the last message in the conversation.
+</ResponseField>
+
+---
+
+### GET /chat/conversations/:id/messages
+
+Returns the ordered message history for a single conversation. Only the owner of the conversation can access it.
+
+**Authentication:** Required
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Conversation ID.
+</ParamField>
+
+#### Response
+
+<ResponseField name="[].id" type="number">
+  Message ID.
+</ResponseField>
+
+<ResponseField name="[].role" type="string">
+  Sender role: `"user"` or `"assistant"`.
+</ResponseField>
+
+<ResponseField name="[].content" type="string">
+  Message text.
+</ResponseField>
+
+<ResponseField name="[].createdAt" type="string">
+  Message timestamp.
+</ResponseField>
+
+```bash
+curl "https://mejoragemeseg-production.up.railway.app/chat/conversations/38/messages" \
+  -H "Authorization: Bearer <jwt_token>"
+```
+
+---
+
+## User Agents
+
+### GET /agents/available
+
+Returns the agents available to the authenticated user: the global agent (available to all users) plus any agents explicitly assigned to this user by an administrator.
+
+**Authentication:** Required
+
+#### Response
+
+<ResponseField name="[].id" type="number">
+  Agent ID.
+</ResponseField>
+
+<ResponseField name="[].name" type="string">
+  Display name of the agent.
+</ResponseField>
+
+<ResponseField name="[].scope" type="string">
+  Operational scope: `GLOBAL`, `PROJECTS`, `TASKS`, or `ADMIN`.
+</ResponseField>
+
+<ResponseField name="[].isActive" type="boolean">
+  Whether the agent is active and accepting messages.
+</ResponseField>
+
+```bash
+curl https://mejoragemeseg-production.up.railway.app/agents/available \
+  -H "Authorization: Bearer <jwt_token>"
+```
+
+---
+
+## Admin — Agent Management
+
+All `/admin/agents` endpoints require the `ADMIN` role and `SISTEMAS` section `view` or `write` permission, as the Agents feature is a sub-screen under the Sistemas module.
+
+### GET /admin/agents
+
+Returns all users in the company together with the agents assigned to each of them.
+
+**Authentication:** Required (ADMIN only)
+
+#### Response
+
+Array of user objects, each containing a nested `agents` array.
+
+<ResponseField name="[].id" type="number">User ID.</ResponseField>
+
+<ResponseField name="[].fullName" type="string">User's full name.</ResponseField>
+
+<ResponseField name="[].email" type="string">User's email.</ResponseField>
+
+<ResponseField name="[].agents" type="array">
+  Agents assigned to this user. Each entry has `id`, `name`, `scope`, `isActive`.
+</ResponseField>
+
+---
+
+### GET /admin/agents/catalog
+
+Returns the complete catalog of all agents defined in the company (both global agents and user-specific ones).
+
+**Authentication:** Required (ADMIN only)
+
+#### Response
+
+<ResponseField name="[].id" type="number">Agent ID.</ResponseField>
+
+<ResponseField name="[].name" type="string">Agent display name (max 100 chars).</ResponseField>
+
+<ResponseField name="[].systemMsg" type="string">
+  System prompt / instructions for this agent (max 2000 chars).
+</ResponseField>
+
+<ResponseField name="[].scope" type="string">
+  `GLOBAL` | `PROJECTS` | `TASKS` | `ADMIN`.
+</ResponseField>
+
+<ResponseField name="[].isActive" type="boolean">Whether the agent is active.</ResponseField>
+
+<ResponseField name="[].createdBy" type="number | null">
+  User ID of the admin who created the agent. `null` for the platform-level global agent.
+</ResponseField>
+
+---
+
+### GET /admin/agents/assignments
+
+Returns a flat list of all agent-to-user assignments.
+
+**Authentication:** Required (ADMIN only)
+
+#### Response
+
+<ResponseField name="[].id" type="number">Assignment ID.</ResponseField>
+
+<ResponseField name="[].agentId" type="number">Agent ID.</ResponseField>
+
+<ResponseField name="[].agent" type="object">Nested agent object.</ResponseField>
+
+<ResponseField name="[].userId" type="number">User ID.</ResponseField>
+
+<ResponseField name="[].user" type="object">Nested user object.</ResponseField>
+
+<ResponseField name="[].assignedAt" type="string">Assignment timestamp.</ResponseField>
+
+---
+
+### POST /admin/agents
+
+Creates a new agent and automatically assigns it to the creating administrator.
+
+**Authentication:** Required (ADMIN only)
+
+#### Request Body
+
+<ParamField body="userId" type="number" required>
+  ID of the user who owns/created this agent (typically the calling admin's own ID).
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  Display name for the agent. Maximum 100 characters.
+</ParamField>
+
+<ParamField body="systemMsg" type="string" required>
+  System prompt that defines the agent's behavior and persona. Maximum 2000 characters.
+</ParamField>
+
+<ParamField body="scope" type="string">
+  Operational scope of the agent. Allowed values: `GLOBAL`, `PROJECTS`, `TASKS`, `ADMIN`. Defaults to `GLOBAL`.
+</ParamField>
+
+#### Response
+
+Returns the created agent object with its assigned `id`.
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/admin/agents \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": 5,
+    "name": "Asistente de Custodias",
+    "systemMsg": "Eres un asistente especializado en la gestión de custodias de transporte de seguridad. Responde siempre en español y con datos concretos sobre órdenes, estados y nómina.",
+    "scope": "GLOBAL"
+  }'
+```
+
+---
+
+### PATCH /admin/agents/:id
+
+Updates one or more fields of an existing agent.
+
+**Authentication:** Required (ADMIN only)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Agent ID to update.
+</ParamField>
+
+#### Request Body
+
+<ParamField body="name" type="string">
+  Updated display name (max 100 chars).
+</ParamField>
+
+<ParamField body="systemMsg" type="string">
+  Updated system prompt (max 2000 chars).
+</ParamField>
+
+<ParamField body="scope" type="string">
+  Updated scope. One of: `GLOBAL`, `PROJECTS`, `TASKS`, `ADMIN`.
+</ParamField>
+
+<ParamField body="isActive" type="boolean">
+  Set to `false` to deactivate the agent without deleting it.
+</ParamField>
+
+---
+
+### DELETE /admin/agents/:id
+
+Permanently deletes an agent and all its assignments. Existing conversation history is preserved but the agent can no longer receive new messages.
+
+**Authentication:** Required (ADMIN only)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Agent ID to delete.
+</ParamField>
+
+---
+
+### POST /admin/agents/:id/assign/:userId
+
+Assigns an agent to a specific user. After this call, the agent will appear in the user's `/agents/available` list.
+
+**Authentication:** Required (ADMIN only)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Agent ID to assign.
+</ParamField>
+
+<ParamField path="userId" type="number" required>
+  User ID to assign the agent to.
+</ParamField>
+
+#### Response
+
+Returns the created assignment record with `id`, `agentId`, `userId`, and `assignedAt`.
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/admin/agents/3/assign/12 \
+  -H "Authorization: Bearer <jwt_token>"
+```
+
+---
+
+### DELETE /admin/agents/:id/assign/:userId
+
+Removes an agent assignment from a user. The user will no longer see this agent in `/agents/available`.
+
+**Authentication:** Required (ADMIN only)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Agent ID to unassign.
+</ParamField>
+
+<ParamField path="userId" type="number" required>
+  User ID to remove the agent from.
+</ParamField>
+
+#### Response
+
+Returns the deleted assignment record.

@@ -1,0 +1,303 @@
+---
+title: "Tools API: Software Inventory, Assignments, and Audit Logs"
+sidebarTitle: "Tools"
+description: "REST endpoints for the software tool catalog. Create tools, assign them to users, update assignments, and retrieve full audit history."
+---
+
+The Tools module provides a company-wide software inventory catalog and tracks which tools are assigned to which users. Every assignment action is recorded in an append-only audit log so administrators can see exactly who assigned or removed a tool and when. All endpoints are protected by JWT authentication and require the `ADMIN` role — regular users cannot call these endpoints directly.
+
+**Base URL:** `https://mejoragemeseg-production.up.railway.app`
+
+**Authentication:** All endpoints require `Authorization: Bearer <jwt_token>` and **ADMIN role**.
+
+---
+
+### GET /tools
+
+Returns the complete software tool catalog for the company.
+
+**Authentication:** Required (ADMIN only)
+
+#### Response
+
+<ResponseField name="[].id" type="number">
+  Unique numeric identifier for the tool.
+</ResponseField>
+
+<ResponseField name="[].name" type="string">
+  Display name of the tool (e.g. `"Figma"`, `"VS Code"`).
+</ResponseField>
+
+<ResponseField name="[].category" type="string">
+  Optional category label used for grouping tools.
+</ResponseField>
+
+<ResponseField name="[].createdAt" type="string">
+  Timestamp when the tool was added to the catalog.
+</ResponseField>
+
+```bash
+curl https://mejoragemeseg-production.up.railway.app/tools \
+  -H "Authorization: Bearer <jwt_token>"
+```
+
+---
+
+### POST /tools
+
+Adds a new software tool to the company catalog. Only administrators can create tools.
+
+**Authentication:** Required (ADMIN only)
+
+#### Request Body
+
+<ParamField body="name" type="string" required>
+  Name of the tool to add to the catalog (e.g. `"Slack"`, `"Adobe XD"`).
+</ParamField>
+
+<ParamField body="category" type="string">
+  Optional grouping category (e.g. `"Design"`, `"Communication"`, `"Development"`).
+</ParamField>
+
+#### Response
+
+Returns the created tool object with its assigned `id` and `createdAt` timestamp.
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/tools \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Figma",
+    "category": "Design"
+  }'
+```
+
+---
+
+### DELETE /tools/:id
+
+Permanently removes a tool from the catalog. Any existing assignments for this tool will also be removed.
+
+**Authentication:** Required (ADMIN only)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Numeric ID of the tool to delete.
+</ParamField>
+
+#### Response
+
+Returns the deleted tool object.
+
+---
+
+### GET /tools/assignments
+
+Returns all tool-to-user assignments, optionally filtered by tool name or user.
+
+**Authentication:** Required (ADMIN only)
+
+#### Query Parameters
+
+<ParamField query="tool" type="string">
+  Partial or full tool name to filter assignments (case-insensitive).
+</ParamField>
+
+<ParamField query="user" type="string">
+  Partial or full user name/email to filter assignments.
+</ParamField>
+
+#### Response
+
+<ResponseField name="[].id" type="number">
+  Assignment record ID.
+</ResponseField>
+
+<ResponseField name="[].toolId" type="number">
+  ID of the assigned tool.
+</ResponseField>
+
+<ResponseField name="[].tool" type="object">
+  Nested tool object with `id`, `name`, `category`.
+</ResponseField>
+
+<ResponseField name="[].userId" type="number">
+  ID of the assigned user.
+</ResponseField>
+
+<ResponseField name="[].user" type="object">
+  Nested user object with `id`, `fullName`, `email`.
+</ResponseField>
+
+<ResponseField name="[].version" type="string">
+  Version string for this specific assignment (e.g. `"2024.1"`).
+</ResponseField>
+
+<ResponseField name="[].licenseKey" type="string">
+  License key associated with this assignment.
+</ResponseField>
+
+<ResponseField name="[].assignedAt" type="string">
+  Timestamp of when the assignment was created.
+</ResponseField>
+
+---
+
+### GET /tools/users
+
+Returns a list of all users in the company together with the tools currently assigned to them.
+
+**Authentication:** Required (ADMIN only)
+
+#### Response
+
+<ResponseField name="[].id" type="number">
+  User ID.
+</ResponseField>
+
+<ResponseField name="[].fullName" type="string">
+  User's full name.
+</ResponseField>
+
+<ResponseField name="[].email" type="string">
+  User's email address.
+</ResponseField>
+
+<ResponseField name="[].tools" type="array">
+  Array of assignment objects (each containing `id`, `tool`, `version`, `licenseKey`).
+</ResponseField>
+
+---
+
+### POST /tools/assign
+
+Creates a new tool assignment, linking one tool to one user. Each combination of `toolId` + `userId` is recorded as an individual assignment row, allowing multiple concurrent assignments per user.
+
+**Authentication:** Required (ADMIN only)
+
+#### Request Body
+
+<ParamField body="toolId" type="number" required>
+  Numeric ID of the tool to assign.
+</ParamField>
+
+<ParamField body="userId" type="number" required>
+  Numeric ID of the user to receive the assignment.
+</ParamField>
+
+<ParamField body="version" type="string">
+  Optional version string for this assignment (e.g. `"Enterprise 2024"`).
+</ParamField>
+
+<ParamField body="licenseKey" type="string">
+  Optional license key for this specific user's seat.
+</ParamField>
+
+#### Response
+
+Returns the created assignment object, including the `id` that can be used for subsequent `PATCH`, `DELETE`, and audit log requests.
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/tools/assign \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "toolId": 3,
+    "userId": 12,
+    "version": "Enterprise 2024",
+    "licenseKey": "XXXX-YYYY-ZZZZ-0000"
+  }'
+```
+
+---
+
+### PATCH /tools/assign/:id
+
+Updates the `version` or `licenseKey` fields of an existing assignment. The change is recorded in the audit log with the ID of the admin who performed the update.
+
+**Authentication:** Required (ADMIN only)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Numeric ID of the assignment record to update.
+</ParamField>
+
+#### Request Body
+
+<ParamField body="version" type="string">
+  Updated version string.
+</ParamField>
+
+<ParamField body="licenseKey" type="string">
+  Updated license key.
+</ParamField>
+
+#### Response
+
+Returns the updated assignment object.
+
+---
+
+### DELETE /tools/assign/:id
+
+Removes an assignment record. The deletion is logged in the audit trail.
+
+**Authentication:** Required (ADMIN only)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Numeric ID of the assignment to remove.
+</ParamField>
+
+#### Response
+
+Returns the deleted assignment object.
+
+---
+
+### GET /tools/assign/:id/audit
+
+Returns the complete, ordered audit history for a single assignment. Each entry captures who performed the action, what changed, and when.
+
+**Authentication:** Required (ADMIN only)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Numeric ID of the assignment whose audit log you want to retrieve.
+</ParamField>
+
+#### Response
+
+<ResponseField name="[].id" type="number">
+  Audit log entry ID.
+</ResponseField>
+
+<ResponseField name="[].action" type="string">
+  Action type, e.g. `"ASSIGNED"`, `"UPDATED"`, `"REMOVED"`.
+</ResponseField>
+
+<ResponseField name="[].performedBy" type="number">
+  User ID of the admin who performed the action.
+</ResponseField>
+
+<ResponseField name="[].performedByUser" type="object">
+  Nested user object with `id`, `fullName`, `email`.
+</ResponseField>
+
+<ResponseField name="[].changes" type="object">
+  Key-value snapshot of what changed (e.g. `{ "licenseKey": "old → new" }`).
+</ResponseField>
+
+<ResponseField name="[].createdAt" type="string">
+  Timestamp of the audit log entry.
+</ResponseField>
+
+```bash
+curl "https://mejoragemeseg-production.up.railway.app/tools/assign/7/audit" \
+  -H "Authorization: Bearer <jwt_token>"
+```

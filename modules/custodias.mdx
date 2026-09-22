@@ -1,0 +1,249 @@
+---
+title: "Custodias: Security Transport Orders, Payroll, and PDF Generation"
+sidebarTitle: "Custodias"
+description: "Manage security transport orders (HACIENDA, PUERTO, VIP) with state tracking, automated payroll matrix, and PDFKit-generated documents."
+---
+
+The Custodias module manages the full lifecycle of security transport assignments — from initial order creation through to worker payroll. Each custodia dispatches a three-person security team (driver + two custodians) to escort a transport, and only orders that reach the `LLEGO` state contribute to payroll calculations. The module is integrated into the MejoraGemeseg multi-tenant ecosystem, with all data scoped to the active `companyId`.
+
+## Custodia Types and Rates
+
+Every custodia is assigned a fixed type at creation. The rate per person is fixed, and all operations use exactly three personnel, giving a fixed total cost per trip.
+
+| Type | Rate / Person | Fixed Total (3 persons) |
+|------|--------------|------------------------|
+| `HACIENDA` | $20.00 | $60.00 |
+| `PUERTO` | $10.00 | $30.00 |
+| `VIP` | $23.00 | $69.00 |
+
+## State Lifecycle
+
+Custodias move through three states in sequence. Only the final state triggers payroll inclusion.
+
+| State | UI Label | Triggers Payroll |
+|-------|----------|-----------------|
+| `LISTO_PARA_CUSTODIAR` | LISTO PARA CUSTODIAR | No |
+| `EN_CAMINO` | EN CAMINO | No |
+| `LLEGO` | LLEGÓ | **Yes** |
+
+<Steps>
+  <Step title="LISTO_PARA_CUSTODIAR">
+    The order is created and personnel are assigned. The team is ready to depart but has not yet left.
+  </Step>
+  <Step title="EN_CAMINO">
+    The vehicle has departed. The state is updated via `PATCH /custodias/:id/estado`.
+  </Step>
+  <Step title="LLEGO">
+    The transport has arrived at its destination. This is the only state that causes the custodia to be counted in payroll (nómina) calculations.
+  </Step>
+</Steps>
+
+## Data Model
+
+The `Custodia` model captures all logistical, personnel, and route information. Type-specific fields are conditionally populated.
+
+```prisma
+model Custodia {
+  id               Int            @id @default(autoincrement())
+  numeroGuia       String         @unique
+  tipoCustodia     CustodiaType
+  estado           CustodiaEstado @default(LISTO_PARA_CUSTODIAR)
+
+  // Personnel
+  choferName       String
+  choferCedula     String         @default("")
+  custodio1Name    String
+  custodio1Cedula  String         @default("")
+  custodio2Name    String
+  custodio2Cedula  String         @default("")
+
+  // Transport details
+  cliente          String         @default("")
+  placa            String         @default("")
+  direccionSalida  String         @default("")
+  direccionLlegada String         @default("")
+  fechaHoraSalida  DateTime?
+  fechaHoraLlegada DateTime?
+  observaciones    String?
+
+  // Type-specific fields
+  nombreHacienda   String?   // HACIENDA only
+  cantidadSacos    Int?      // HACIENDA only
+  contenedores     String[]  // PUERTO only
+
+  companyId        Int
+  createdBy        Int
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+```
+
+### Type-specific Fields
+
+| Type | Extra Fields | Validation |
+|------|-------------|-----------|
+| `HACIENDA` | `nombreHacienda` (string), `cantidadSacos` (int ≥ 1) | Both required |
+| `PUERTO` | `contenedores[]` (array of strings — number, seal, guide, BL) | Optional items |
+| `VIP` | — | No extra fields |
+
+## Create Custodia Payload
+
+The `CreateCustodiaDto` defines all accepted fields. Personnel cedulas are optional to support manual name-only entry.
+
+```typescript
+class CreateCustodiaDto {
+  numeroGuia: string;       // Required — unique guide number (e.g. "G-0001")
+  tipoCustodia: string;     // Required — "HACIENDA" | "PUERTO" | "VIP"
+
+  choferName: string;       // Required
+  choferCedula?: string;
+
+  custodio1Name: string;    // Required
+  custodio1Cedula?: string;
+
+  custodio2Name: string;    // Required
+  custodio2Cedula?: string;
+
+  cliente?: string;
+  placa?: string;
+  direccionSalida?: string;
+  direccionLlegada?: string;
+  fechaHoraSalida?: string;   // ISO 8601
+  fechaHoraLlegada?: string;  // ISO 8601
+  observaciones?: string;
+
+  // HACIENDA only
+  nombreHacienda?: string;
+  cantidadSacos?: number;
+
+  // PUERTO only
+  contenedores?: string[];
+}
+```
+
+<Note>
+  The guide number (`numeroGuia`) must be unique per company. The seed data uses the format `G-0001` through `G-0010`. Personnel are fetched from `EmployeeDriveFolder` records with `folderType = 'CUSTODIAS'`. Use the `+ Manual` option to enter staff not yet in the system.
+</Note>
+
+## API Endpoints
+
+| Method | Route | Description |
+|--------|-------|-------------|
+| `POST` | `/custodias` | Create a new custodia order |
+| `GET` | `/custodias` | List custodias (filters: `fechaInicio`, `fechaFin`, `tipo`, `estado`) |
+| `GET` | `/custodias/dashboard` | KPIs for the current month |
+| `GET` | `/custodias/trabajador` | Trips and earnings by worker cedula (`?cedula=&mes=`) |
+| `GET` | `/custodias/available-custodios` | Available employees from the CUSTODIAS Drive folder |
+| `POST` | `/custodias/gemebot/query` | GEME-BOT AI operational query assistant |
+| `GET` | `/custodias/:id` | Get custodia detail |
+| `PATCH` | `/custodias/:id/estado` | Transition state |
+| `DELETE` | `/custodias/:id` | Delete a custodia |
+| `GET` | `/custodias/:id/pdf` | Generate and download Orden de Custodia PDF |
+| `GET` | `/custodias/nomina` | Payroll with chronological matrix (filters: `fechaInicio`, `fechaFin`) |
+| `GET` | `/custodias/nomina/pdf` | Export payroll PDF (`?cedula=` for individual, `?todos=true` for all, no param for matrix) |
+
+### State Transition Payload
+
+```typescript
+// PATCH /custodias/:id/estado
+class UpdateEstadoDto {
+  estado: 'LISTO_PARA_CUSTODIAR' | 'EN_CAMINO' | 'LLEGO';
+}
+```
+
+### Dashboard Response Fields
+
+`GET /custodias/dashboard` returns the following KPIs scoped to the current calendar month:
+
+- `total_viajes` — total trips created
+- `total_nomina_usd` — sum of payroll for completed (`LLEGO`) custodias
+- `empleados_activos` — distinct workers assigned in the period
+- `por_tipo` — count breakdown by `HACIENDA` / `PUERTO` / `VIP`
+- `por_estado` — count breakdown by state
+
+## Payroll (Nómina)
+
+The nómina system aggregates all custodias in `LLEGO` state for a given date range and groups them by individual worker. Each person may appear as a chofer, custodio 1, or custodio 2 across multiple trips.
+
+### Breakdown Table
+
+For each worker, the nómina shows:
+
+| Column | Description |
+|--------|-------------|
+| Worker name + cedula | Identifies the person |
+| HACIENDA trips | Count × $60 subtotal |
+| PUERTO trips | Count × $30 subtotal |
+| VIP trips | Count × $69 subtotal |
+| Total earned | Sum across all trip types |
+
+### Chronological Matrix
+
+The matrix is a pivot table of **dates × workers** where each cell is coloured by the role the worker filled that day:
+
+| Cell Colour | Role |
+|-------------|------|
+| Yellow (`#fffbeb`) | Chofer (driver) |
+| Grey (`#f1f5f9`) | Custodio 1 or Custodio 2 |
+
+The matrix is displayed on the `NominaPage` and exported to the Nómina General PDF.
+
+## PDF Generation
+
+All PDFs are generated server-side using [PDFKit](https://pdfkit.org/). Colour palette: Navy `#1e3a5f`, Gold `#d4a017`.
+
+| Document | Paper | Orientation | Description |
+|----------|-------|-------------|-------------|
+| **Orden de Custodia** | LETTER | Portrait | Full order details with signature blocks for Cliente, Chofer, Custodio 1, and Custodio 2 |
+| **Nómina General (Matriz)** | LEGAL | Landscape | Full chronological matrix for the selected period |
+| **Rol de Pago Individual** | LETTER | Portrait | Single worker earnings with per-trip breakdown |
+
+<Tip>
+  Access individual PDFs from the custodia detail modal in the UI, or directly via `GET /custodias/:id/pdf`. For payroll exports, use `GET /custodias/nomina/pdf?cedula=<cedula>` for a single worker's Rol de Pago, or omit parameters to export the full matrix.
+</Tip>
+
+## GEME-BOT
+
+`POST /custodias/gemebot/query` exposes an AI-assisted operational query interface for the custodias data. It accepts natural-language or keyword queries and returns structured operational answers (trip counts, worker histories, etc.) using the company's custodia records.
+
+```json
+// POST /custodias/gemebot/query
+{
+  "query": "¿Cuántas custodias tipo PUERTO completó Juan Pérez en enero?"
+}
+```
+
+## Frontend Pages and Components
+
+### Pages
+
+| Page | Route | Description |
+|------|-------|-------------|
+| `CustodiaForm` | `/custodias/new` | Full creation form: type selector, guide number, route, schedule, personnel selection, client, plate, and type-specific fields |
+| `CustodiasList` | `/custodias` | Filterable list (type / state / date range) with inline state change and detail modal |
+| `NominaPage` | `/custodias/nomina` | Summary cards, per-type breakdown table, chronological matrix, and PDF export buttons |
+
+### Reusable Components
+
+| Component | Description |
+|-----------|-------------|
+| `EstadoSelect` | Inline dropdown for state transitions, colour-coded per state |
+| `CustodiaDetalleModal` | Full detail overlay with a direct link to the Orden de Custodia PDF |
+| `ImprimirOrdenModal` | Post-registration prompt to print the order immediately |
+| `EmpleadoSelect` | Search-and-select component for employees from the CUSTODIAS Drive folder, with `+ Manual` fallback |
+
+### Key Source Files
+
+```
+backend/src/modules/custodias/custodias.service.ts   # CRUD, state transitions, nómina matrix
+backend/src/modules/custodias/custodias.controller.ts # All endpoints including PDF
+backend/src/modules/custodias/pdf.service.ts          # PDFKit document generation
+backend/src/modules/custodias/dto/create-custodia.dto.ts
+backend/src/modules/custodias/dto/update-estado.dto.ts
+
+frontend/src/pages/custodias/CustodiaForm.tsx
+frontend/src/pages/custodias/CustodiasList.tsx
+frontend/src/pages/custodias/NominaPage.tsx
+frontend/src/services/custodia.service.ts
+frontend/src/components/custodias/
+```

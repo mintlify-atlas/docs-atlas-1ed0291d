@@ -1,0 +1,214 @@
+---
+title: "Authentication: JWT Login, Registration, and Role Guards"
+sidebarTitle: "Authentication"
+description: "MejoraGemeseg uses JWT tokens (7-day expiry) with bcrypt password hashing. Registration is restricted to company email domains."
+---
+
+MejoraGemeseg uses a stateless JWT-based authentication system built on NestJS Passport. Every protected route validates a signed token extracted from the `Authorization: Bearer` header. Passwords are hashed with bcrypt (salt rounds: 10) before storage and are never returned in any response. The `companyId` embedded in the token drives multi-tenant data isolation across all modules.
+
+## Endpoints
+
+| Method | Path | Auth required | Description |
+|--------|------|---------------|-------------|
+| `POST` | `/auth/register` | No | Register a new user (domain-restricted) |
+| `POST` | `/auth/login` | No | Log in and receive a JWT |
+| `POST` | `/auth/forgot-password` | No | Reset a user's password |
+| `GET` | `/auth/profile` | Yes (`AuthGuard('jwt')`) | Return the authenticated user's JWT payload |
+| `GET` | `/auth/status` | No | Health check for the auth module |
+
+---
+
+## Login flow
+
+<Steps>
+  <Step title="Submit credentials">
+    Send a `POST` request to `/auth/login` with the user's email and password.
+
+    ```json
+    {
+      "email": "juan.perez@gemeseg.com",
+      "password": "s3cur3pass"
+    }
+    ```
+  </Step>
+
+  <Step title="Credentials are validated">
+    The service looks up the user by email with `prisma.user.findUnique`. If the user is not found, or if `bcrypt.compare` returns `false`, the server responds with `401 Unauthorized` and the message `"Credenciales inválidas"`.
+  </Step>
+
+  <Step title="JWT is signed and returned">
+    On success, a JWT is signed using `jwtService.sign` with the payload below and returned alongside a safe user object.
+
+    ```json
+    {
+      "user": {
+        "id": 12,
+        "email": "juan.perez@gemeseg.com",
+        "fullName": "Juan Pérez",
+        "role": "EMPLOYEE",
+        "companyId": 3
+      },
+      "token": "<jwt>"
+    }
+    ```
+  </Step>
+
+  <Step title="Store and use the token">
+    Include the token in the `Authorization` header for every subsequent request to a protected endpoint.
+
+    ```http
+    Authorization: Bearer <jwt>
+    ```
+  </Step>
+</Steps>
+
+---
+
+## JWT token
+
+### Payload
+
+The JWT payload contains exactly four claims set by `generateToken()` in `AuthService`:
+
+| Claim | Type | Description |
+|-------|------|-------------|
+| `sub` | `number` | The user's database `id` |
+| `email` | `string` | The user's email address |
+| `role` | `UserRole` | One of `ADMIN`, `MANAGER`, `EMPLOYEE` |
+| `companyId` | `number \| null` | The user's company. `null` for the Super Admin |
+
+### Expiry and secret
+
+Tokens are configured in `AuthModule` with a fixed `expiresIn: '7d'`. The signing secret is read from the `JWT_SECRET` environment variable; the module throws at startup if the variable is missing.
+
+<Note>
+  After `JwtStrategy.validate()` transforms the payload, `req.user` exposes `userId` (mapped from `sub`), not `req.user.sub`. Always use `req.user.userId` inside controllers.
+</Note>
+
+---
+
+## Registration
+
+`POST /auth/register` creates a new user account. The request body is validated against `RegisterDto`:
+
+<ParamField body="email" type="string" required>
+  Must be a valid email address. Must end with a domain that matches a company record in the database (e.g. `@gemeseg.com`). Throws `403 Forbidden` if the domain is not allowed.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Minimum 6 characters. Hashed with bcrypt (salt 10) before storage.
+</ParamField>
+
+<ParamField body="firstName" type="string" required>
+  Combined with `lastName` to form the user's `fullName`.
+</ParamField>
+
+<ParamField body="lastName" type="string" required>
+  Combined with `firstName` to form the user's `fullName`.
+</ParamField>
+
+### Domain guard
+
+Registration checks every incoming email against the `domain` field of all companies in the database. If none of the configured company domains match the email's domain, the request is rejected:
+
+```
+403 Forbidden
+"Solo se permiten correos corporativos (@gemeseg.com)"
+```
+
+After a successful check, the user's `companyId` is automatically resolved by matching the email domain to the corresponding company row.
+
+<Warning>
+  If no company has a configured `domain` value in the database, the domain check is skipped and any email can register. Always ensure at least one company has its `domain` set in production.
+</Warning>
+
+---
+
+## Password reset
+
+`POST /auth/forgot-password` allows a user to set a new password without the previous one. The request is validated against `ForgotPasswordDto`:
+
+<ParamField body="email" type="string" required>
+  Must belong to an existing user. Throws `401 Unauthorized` if not found.
+</ParamField>
+
+<ParamField body="newPassword" type="string" required>
+  Minimum 7 characters. Hashed with bcrypt (salt 10) and persisted immediately.
+</ParamField>
+
+<Warning>
+  This endpoint has no verification step (no email link, no OTP). It is intended for internal, admin-assisted password resets. Do not expose it publicly without adding a secondary verification layer.
+</Warning>
+
+---
+
+## Guards
+
+Two guards protect routes throughout the application:
+
+<CardGroup cols={2}>
+  <Card title="AuthGuard('jwt')" icon="lock">
+    The standard Passport JWT guard from `@nestjs/passport`. Validates the `Authorization: Bearer` token on every decorated route. Returns `401 Unauthorized` if the token is missing, expired, or invalid.
+  </Card>
+  <Card title="RolesGuard" icon="shield-check">
+    A custom NestJS guard that reads the `@Roles()` decorator and compares it against `req.user.role`. Returns `403 Forbidden` if the authenticated user's role does not match. Must be used together with `AuthGuard('jwt')`.
+  </Card>
+</CardGroup>
+
+### Usage example (controller)
+
+```typescript
+@Get('stats')
+@UseGuards(AuthGuard('jwt'), RolesGuard)
+@Roles(UserRole.ADMIN)
+getStats(@Req() req: any) {
+  return this.usersService.getStats(req.user.companyId);
+}
+```
+
+---
+
+## Retrieving authenticated user info
+
+`GET /auth/profile` requires a valid JWT and returns the decoded payload as transformed by `JwtStrategy.validate()`:
+
+```json
+{
+  "userId": 12,
+  "email": "juan.perez@gemeseg.com",
+  "role": "EMPLOYEE",
+  "companyId": 3
+}
+```
+
+<Tip>
+  Use `GET /auth/profile` during development to verify that your token decodes correctly and that `companyId` is set as expected.
+</Tip>
+
+---
+
+## Complete login + authenticated request example
+
+```typescript
+// 1. Login
+const loginRes = await fetch('https://api.mejora.gemeseg.com/auth/login', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    email: 'juan.perez@gemeseg.com',
+    password: 's3cur3pass',
+  }),
+});
+
+const { token } = await loginRes.json();
+
+// 2. Use the token in a subsequent request
+const profileRes = await fetch('https://api.mejora.gemeseg.com/auth/profile', {
+  headers: {
+    Authorization: `Bearer ${token}`,
+  },
+});
+
+const profile = await profileRes.json();
+// { userId: 12, email: 'juan.perez@gemeseg.com', role: 'EMPLOYEE', companyId: 3 }
+```

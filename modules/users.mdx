@@ -1,0 +1,267 @@
+---
+title: "User Management: CRUD, Profiles, and Section Permissions"
+sidebarTitle: "Users"
+description: "Admins manage users with full CRUD, role assignment, and section-level permissions. Every user belongs to a company and has a role (ADMIN, MANAGER, EMPLOYEE)."
+---
+
+Every person who accesses MejoraGemeseg is represented by a `User` record. Users are always scoped to a single company via `companyId`, which is embedded in the JWT and applied automatically to every query. Admins create and manage users; the password is always hashed with bcrypt before storage and is never included in any response.
+
+## User model
+
+The `User` model in Prisma contains the following fields relevant to the users module:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `Int` | Auto-incrementing primary key |
+| `fullName` | `String` | Display name (combined from `firstName + lastName` at registration) |
+| `email` | `String` | Unique email address |
+| `password` | `String?` | bcrypt hash (never returned in responses) |
+| `documentNumber` | `String?` | National ID or document number |
+| `position` | `String?` | Job title or position within the company |
+| `departmentId` | `Int?` | FK to `Department` |
+| `roleId` | `Int?` | FK to the `Role` catalogue table |
+| `role` | `UserRole` | Enum: `ADMIN`, `MANAGER`, or `EMPLOYEE` (defaults to `EMPLOYEE`) |
+| `companyId` | `Int?` | FK to `Company`. `null` only for the Super Admin |
+| `isActive` | `Boolean` | `true` by default. `false` after a soft delete |
+| `activeAgentId` | `Int?` | The AI agent currently selected by this user |
+| `createdAt` | `DateTime` | Record creation timestamp |
+| `updatedAt` | `DateTime` | Last update timestamp |
+
+### Roles
+
+```prisma
+enum UserRole {
+  ADMIN
+  MANAGER
+  EMPLOYEE
+}
+```
+
+| Role | Access level |
+|------|-------------|
+| `ADMIN` | Full access to all user management endpoints within their company. The Super Admin (`companyId: null`) additionally manages all companies. |
+| `MANAGER` | Authenticated access to standard endpoints; cannot perform CRUD on other users. |
+| `EMPLOYEE` | Authenticated access; subject to per-section `UserPermission` rules. |
+
+---
+
+## Endpoints
+
+### POST /users — Create user (ADMIN only)
+
+Creates a new user scoped to the calling admin's company. Requires `AuthGuard('jwt')` + `RolesGuard` with `@Roles(UserRole.ADMIN)`.
+
+<ParamField body="fullName" type="string" required>
+  The user's full display name.
+</ParamField>
+
+<ParamField body="email" type="string" required>
+  Must be a valid, unique email. Throws `409 Conflict` if already in use.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Minimum 6 characters. Hashed with bcrypt (salt 10) before storage and never returned.
+</ParamField>
+
+<ParamField body="role" type="UserRole">
+  Optional. One of `ADMIN`, `MANAGER`, `EMPLOYEE`. Defaults to `EMPLOYEE` if omitted.
+</ParamField>
+
+<ParamField body="documentNumber" type="string">
+  Optional. National ID or corporate document number.
+</ParamField>
+
+<ParamField body="position" type="string">
+  Optional. Job title or position description.
+</ParamField>
+
+<ParamField body="departmentId" type="integer">
+  Optional. ID of an existing `Department` record.
+</ParamField>
+
+<ParamField body="roleId" type="integer">
+  Optional. ID of an existing `Role` catalogue record (distinct from the `UserRole` enum).
+</ParamField>
+
+```json
+// POST /users
+{
+  "fullName": "María López",
+  "email": "maria.lopez@gemeseg.com",
+  "password": "S3gur0Pass",
+  "role": "MANAGER",
+  "position": "Coordinadora de RRHH",
+  "departmentId": 2
+}
+```
+
+---
+
+### GET /users — List users
+
+Returns all users belonging to the authenticated user's company. Supports optional query parameters:
+
+| Query param | Type | Description |
+|-------------|------|-------------|
+| `role` | `string` | Filter by `UserRole` value (`ADMIN`, `MANAGER`, `EMPLOYEE`) |
+| `isActive` | `string` | `"true"` or `"false"` to filter by active status |
+| `search` | `string` | Case-insensitive substring match on `fullName` or `email` |
+
+Results are ordered by `createdAt` descending and include the related `department`, `roleRelation`, and counts for `createdProjects`, `projectMemberships`, and `taskAssignees`.
+
+```http
+GET /users?role=MANAGER&isActive=true&search=maria
+Authorization: Bearer <jwt>
+```
+
+---
+
+### GET /users/me — Current user profile
+
+Returns the full profile of the authenticated user, including assigned tools. Uses `req.user.userId` (not `req.user.sub`) to look up the record.
+
+The response includes:
+
+- `id`, `fullName`, `email`, `role`, `position`, `documentNumber`, `companyId`, `createdAt`
+- `department` and `roleRelation` objects
+- `toolAssignments` — array of assigned `Tool` objects (`id`, `name`, `category`)
+- `_count` — project and task statistics
+
+```json
+// GET /users/me — example response (partial)
+{
+  "id": 12,
+  "fullName": "Juan Pérez",
+  "email": "juan.perez@gemeseg.com",
+  "role": "EMPLOYEE",
+  "position": "Guardia de Seguridad",
+  "companyId": 3,
+  "department": { "id": 1, "name": "Operaciones" },
+  "toolAssignments": [
+    { "tool": { "id": 4, "name": "IsyPlus", "category": "Seguridad" } }
+  ],
+  "_count": { "createdProjects": 0, "projectMemberships": 3, "taskAssignees": 7 }
+}
+```
+
+---
+
+### GET /users/stats — Aggregate statistics (ADMIN only)
+
+Returns aggregate counts for the calling admin's company. Requires `ADMIN` role.
+
+```json
+// GET /users/stats — example response
+{
+  "total": 45,
+  "active": 42,
+  "inactive": 3,
+  "byRole": [
+    { "role": "ADMIN", "count": 2 },
+    { "role": "MANAGER", "count": 8 },
+    { "role": "EMPLOYEE", "count": 35 }
+  ]
+}
+```
+
+---
+
+### GET /users/:id — User detail (ADMIN only)
+
+Returns a single user by numeric `id`. The admin's `companyId` is checked against the target user's `companyId`; a cross-company lookup returns `403 Forbidden`.
+
+---
+
+### PATCH /users/:id — Update user (ADMIN only)
+
+Partially updates a user. All fields are optional. Cross-company edits are rejected with `403 Forbidden`.
+
+<ParamField body="fullName" type="string">Full display name.</ParamField>
+<ParamField body="email" type="string">New email. Validated for uniqueness.</ParamField>
+<ParamField body="password" type="string">New password (min 6 chars). Re-hashed with bcrypt before saving.</ParamField>
+<ParamField body="role" type="UserRole">One of `ADMIN`, `MANAGER`, `EMPLOYEE`.</ParamField>
+<ParamField body="documentNumber" type="string">Document number.</ParamField>
+<ParamField body="position" type="string">Job title.</ParamField>
+<ParamField body="departmentId" type="integer | null">Department FK, or `null` to unset.</ParamField>
+<ParamField body="roleId" type="integer | null">Role catalogue FK, or `null` to unset.</ParamField>
+<ParamField body="isActive" type="boolean">Manually toggle active status.</ParamField>
+
+---
+
+### DELETE /users/:id — Soft delete (ADMIN only)
+
+Sets `isActive = false` on the target user. The user record is **not** removed from the database. Returns:
+
+```json
+{ "message": "Usuario desactivado correctamente" }
+```
+
+<Note>
+  Soft-deleted users retain all their associations (projects, tasks, custodias, etc.) and can be reactivated via `PATCH /users/:id` with `{ "isActive": true }`.
+</Note>
+
+---
+
+## Section permissions
+
+MejoraGemeseg implements a two-layer permission system for controlling which platform sections each user can access.
+
+### CompanySection
+
+A `CompanySection` record toggles whether a given section is **enabled at all for a company**. It is a company-level on/off switch:
+
+```prisma
+model CompanySection {
+  id        Int     @id @default(autoincrement())
+  companyId Int
+  company   Company @relation(...)
+  section   String
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, section])
+}
+```
+
+If a section key does not exist in `CompanySection` for a given company, the `SectionPermissionGuard` blocks all access to that section for every user in the company.
+
+### UserPermission
+
+Once a section is enabled for the company, `UserPermission` controls per-user, per-section granular access:
+
+```prisma
+model UserPermission {
+  id        Int     @id @default(autoincrement())
+  userId    Int
+  user      User    @relation(...)
+  section   String
+  canView   Boolean @default(true)
+  canWrite  Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, section])
+}
+```
+
+| Field | Default | Meaning |
+|-------|---------|---------|
+| `canView` | `true` | User can see the section's UI and read its data |
+| `canWrite` | `false` | User can create, update, or delete records in the section |
+
+<Tip>
+  The Super Admin (`companyId: null`) bypasses both `CompanySection` and `UserPermission` checks and can access all sections of every company without any restriction.
+</Tip>
+
+### Permission precedence summary
+
+1. **Super Admin** (`companyId: null`) — no restrictions.
+2. **Company Admin** (`role: ADMIN`, `companyId` set) — manages section permissions for users in their company; full access to their own company's data.
+3. **Other roles** (`MANAGER`, `EMPLOYEE`) — access is controlled by the combination of `CompanySection` (section enabled?) and `UserPermission` (`canView` / `canWrite`).
+
+---
+
+## Security conventions
+
+- Passwords are always hashed with `bcrypt.hash(password, 10)` before any `prisma.user.create` or `prisma.user.update` call.
+- The `password` field is excluded from every response shape (the `select` in `getMe` explicitly omits it; `findAll` and `findOne` return the Prisma object but the field is `String?` and treated as sensitive).
+- When creating a user, the admin sets the initial password directly — there is no system-generated default.
+- `companyId` is always taken from `req.user.companyId` (the JWT), never from the request body, preventing cross-tenant user creation.

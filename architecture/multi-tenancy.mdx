@@ -1,0 +1,132 @@
+---
+title: "Multi-Tenant Architecture and White-Labeling in MejoraGemeseg"
+sidebarTitle: "Multi-Tenancy"
+description: "MejoraGemeseg supports multiple companies with isolated data, per-company branding, and a Super Admin that manages all tenants."
+---
+
+MejoraGemeseg was designed from the start to serve multiple independent companies from a single deployment. Rather than running a separate database or schema per tenant, the platform uses a **shared database with row-level isolation**: every user and every piece of operational data carries a `companyId` foreign key that scopes all queries to the correct tenant. A special Super Admin account (identified by `companyId: null`) can read and manage data across all tenants.
+
+## The `Company` model
+
+Each tenant is represented by a `Company` record. The Prisma schema defines:
+
+```prisma
+model Company {
+  id             Int     @id @default(autoincrement())
+  name           String
+  slug           String  @unique
+  logoUrl        String?
+  primaryColor   String  @default("#100F31")
+  secondaryColor String  @default("#12375F")
+  accentColor    String  @default("#EE3B1B")
+  bgColor        String  @default("#f8fafc")
+  textColor      String  @default("#1e293b")
+  domain         String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  users          User[]
+  sections       CompanySection[]
+  // ... all other related models
+}
+```
+
+Every operational model in the schema (custodias, cacao lots, sales contracts, HR records, etc.) has a `companyId Int` field with a relation to `Company`. Prisma enforces `onDelete: Cascade` so that deleting a company removes all of its data.
+
+## Data isolation
+
+All service-layer queries include a `companyId` filter. An example pattern across modules:
+
+```typescript
+// Typical query in any service method
+return this.prisma.someModel.findMany({
+  where: { companyId: user.companyId },
+});
+```
+
+The `companyId` is extracted from the JWT payload on every request — it is embedded at login time and does not rely on a request header that a client could forge.
+
+## Super Admin
+
+The Super Admin account (`admin@general.com`) has `companyId: null` in the database and in its JWT payload:
+
+```json
+// JWT payload for Super Admin
+{ "sub": 1, "email": "admin@general.com", "role": "ADMIN", "companyId": null }
+```
+
+When `companyId` is `null`, all `WHERE companyId = ?` clauses are omitted and the query returns data from every company. The `PermissionsService` exposes a helper that other guards and services call:
+
+```typescript
+isSuperAdmin(user: AuthUser): boolean {
+  return user.companyId === null;
+}
+```
+
+The `SectionPermissionGuard` on the backend and the `usePermissions()` hook on the frontend both check `isSuperAdmin` first and short-circuit all other permission checks when it returns `true`.
+
+## Company Admin
+
+A regular ADMIN user (e.g., `admin@gemeseg.com`) has a non-null `companyId`. They can:
+
+- View and manage users, projects, tools, and all operational data for **their company only**.
+- Update their company's branding and section configuration.
+- Cannot access or modify data belonging to other companies.
+
+## White-labeling
+
+Each company configures its own visual identity through five color fields and a logo. The default values match GEMESEG's corporate palette:
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `primaryColor` | `#100F31` | Main dark blue |
+| `secondaryColor` | `#12375F` | Secondary blue |
+| `accentColor` | `#EE3B1B` | Orange accent / CTAs |
+| `bgColor` | `#f8fafc` | Page background |
+| `textColor` | `#1e293b` | Body text |
+| `logoUrl` | `null` | Path under `uploads/logos/` |
+| `domain` | `null` | Email domain (e.g. `gemeseg.com`) |
+
+Logos are uploaded via `POST /api/companies/:id/logo`, stored in `backend/public/uploads/logos/`, and served as static assets. The frontend helper `resolveLogoUrl()` prepends `VITE_API_URL` to any path starting with `/uploads/` to build the full absolute URL.
+
+### Email domain detection at login
+
+The `domain` field drives automatic theme loading. When a user enters their email on the login page, the frontend reads the domain portion and calls `GET /api/companies/slug/:slug` (the endpoint also supports domain lookup) to fetch the company's branding before the user submits credentials. The returned color values are injected as CSS custom properties so the login screen itself renders in the company's colors.
+
+```typescript
+// Frontend — login flow (simplified)
+const domain = email.split('@')[1];
+const company = await companiesService.getByDomain(domain);
+applyTheme(company); // sets --color-primary, --color-secondary, etc.
+```
+
+## `CompanySection` — per-company module toggles
+
+Not every company uses every module. The `CompanySection` model records which sections (modules) are active for a given company:
+
+```prisma
+model CompanySection {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  section   String   // e.g. "PROJECTS", "CACAO", "VENTAS", "PERSONAL"
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, section])
+}
+```
+
+Known section keys used throughout the application:
+
+`DASHBOARD` · `PROJECTS` · `ADMIN` · `COMPANIES` · `COMPANY_SETTINGS` · `CACAO` · `CUSTODIAS` · `PERSONAL` · `VENTAS` · `SISTEMAS` · `TOOLS` · `AGENTS`
+
+A company that does not have a `CompanySection` row for `CACAO` will never see the cacao module in the sidebar or be able to navigate to its routes. The `SectionRoute` component in the frontend and `SectionPermissionGuard` on the backend both enforce this.
+
+## Tenant onboarding
+
+New tenants are created by the Super Admin via `POST /api/companies`. The endpoint is guarded so that only a user with `companyId: null` can call it. After creation, the Super Admin:
+
+1. Creates the first `ADMIN` user for the new company (`POST /api/users`).
+2. Enables the relevant sections for that company (`CompanySection` rows).
+3. Sets the company's branding colors and uploads a logo if available.
+
+From that point forward, the company's own admin manages their users, permissions, and operational data independently.

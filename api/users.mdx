@@ -1,0 +1,488 @@
+---
+title: "Users API: CRUD, Profile, and Statistics Endpoints"
+sidebarTitle: "Users"
+description: "REST endpoints for user management. ADMIN-only creation, update, and delete. Any authenticated user can list users and view their own profile."
+---
+
+The Users API manages the people within each company. All requests are scoped to the caller's `companyId` embedded in their JWT — users from one company can never read or modify users of another. Administrators have full CRUD control: they can create users with explicit passwords, update any field, and soft-delete accounts (setting `isActive: false` rather than removing the database record). Non-admin authenticated users can list all company members and view their own extended profile, which includes assigned tools, project counts, and department information. Passwords are hashed with bcrypt before storage and are **never** returned in any response.
+
+Base URL: `https://mejoragemeseg-production.up.railway.app`
+
+---
+
+### POST /users
+
+Creates a new user within the authenticated admin's company. The admin defines the initial password directly — there is no invite flow or temporary credential. Returns `409 Conflict` if the email is already taken.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** `ADMIN`
+
+#### Request Body
+
+<ParamField body="fullName" type="string" required>
+  The user's full display name.
+</ParamField>
+
+<ParamField body="email" type="string" required>
+  Email address for the new account. Must be unique across the entire system.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Initial plain-text password. Minimum 6 characters. Stored hashed.
+</ParamField>
+
+<ParamField body="role" type="string">
+  System role to assign. Accepted values: `ADMIN`, `EMPLOYEE`. Defaults to `EMPLOYEE` if omitted.
+</ParamField>
+
+<ParamField body="documentNumber" type="string">
+  National ID or employee document number. Optional identifier for HR purposes.
+</ParamField>
+
+<ParamField body="position" type="string">
+  Job title or position within the company (e.g. `"Backend Engineer"`).
+</ParamField>
+
+<ParamField body="departmentId" type="integer">
+  ID of an existing department to associate the user with.
+</ParamField>
+
+<ParamField body="roleId" type="integer">
+  ID of a custom role record (separate from the system `role` enum) for finer-grained permission assignments.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="id" type="integer">
+  Newly created user's unique ID.
+</ResponseField>
+
+<ResponseField name="fullName" type="string">
+  Full display name.
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  Email address of the new user.
+</ResponseField>
+
+<ResponseField name="role" type="string">
+  Assigned system role (`ADMIN` or `EMPLOYEE`).
+</ResponseField>
+
+<ResponseField name="documentNumber" type="string | null">
+  Document number if provided.
+</ResponseField>
+
+<ResponseField name="position" type="string | null">
+  Job position if provided.
+</ResponseField>
+
+<ResponseField name="isActive" type="boolean">
+  Always `true` for freshly created users.
+</ResponseField>
+
+<ResponseField name="companyId" type="integer | null">
+  Company ID inherited from the creating admin's JWT.
+</ResponseField>
+
+<ResponseField name="department" type="object | null">
+  Resolved department object (id, name) or `null` if no `departmentId` was supplied.
+</ResponseField>
+
+<ResponseField name="roleRelation" type="object | null">
+  Resolved custom role object (id, name) or `null` if no `roleId` was supplied.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp of when the user was created.
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/users \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fullName": "María López",
+    "email": "maria.lopez@gemeseg.com",
+    "password": "clave123",
+    "role": "EMPLOYEE",
+    "position": "QA Engineer",
+    "departmentId": 3
+  }'
+```
+
+```json
+{
+  "id": 55,
+  "fullName": "María López",
+  "email": "maria.lopez@gemeseg.com",
+  "role": "EMPLOYEE",
+  "documentNumber": null,
+  "position": "QA Engineer",
+  "isActive": true,
+  "companyId": 1,
+  "department": { "id": 3, "name": "Engineering" },
+  "roleRelation": null,
+  "createdAt": "2024-03-15T10:00:00.000Z"
+}
+```
+
+---
+
+### GET /users
+
+Returns a flat list of all users belonging to the caller's company. Supports optional query-string filters for role, active status, and a full-text search across `fullName` and `email`. Results are ordered by `createdAt` descending. No pagination is applied — the full matching set is returned.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Any authenticated user.
+
+#### Query Parameters
+
+<ParamField query="role" type="string">
+  Filter by system role. Accepted values: `ADMIN`, `EMPLOYEE`.
+</ParamField>
+
+<ParamField query="isActive" type="string">
+  Filter by active status. Pass `"true"` for active users, `"false"` for deactivated users.
+</ParamField>
+
+<ParamField query="search" type="string">
+  Case-insensitive substring search applied to both `fullName` and `email`.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="[]" type="array">
+  Array of user objects.
+
+  <Expandable title="User object fields">
+    <ResponseField name="id" type="integer">Unique user ID.</ResponseField>
+    <ResponseField name="fullName" type="string">Full display name.</ResponseField>
+    <ResponseField name="email" type="string">Email address.</ResponseField>
+    <ResponseField name="role" type="string">System role (`ADMIN` or `EMPLOYEE`).</ResponseField>
+    <ResponseField name="position" type="string | null">Job title.</ResponseField>
+    <ResponseField name="documentNumber" type="string | null">Document number.</ResponseField>
+    <ResponseField name="isActive" type="boolean">Whether the user is active.</ResponseField>
+    <ResponseField name="companyId" type="integer | null">Associated company ID.</ResponseField>
+    <ResponseField name="department" type="object | null">Linked department (id, name).</ResponseField>
+    <ResponseField name="roleRelation" type="object | null">Linked custom role (id, name).</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 creation timestamp.</ResponseField>
+    <ResponseField name="_count" type="object">
+      Activity counters: `createdProjects` (integer), `projectMemberships` (integer), `taskAssignees` (integer).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X GET "https://mejoragemeseg-production.up.railway.app/users?role=EMPLOYEE&isActive=true&search=maria" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+[
+  {
+    "id": 55,
+    "fullName": "María López",
+    "email": "maria.lopez@gemeseg.com",
+    "role": "EMPLOYEE",
+    "position": "QA Engineer",
+    "documentNumber": null,
+    "isActive": true,
+    "companyId": 1,
+    "department": { "id": 3, "name": "Engineering" },
+    "roleRelation": null,
+    "createdAt": "2024-03-15T10:00:00.000Z",
+    "_count": {
+      "createdProjects": 2,
+      "projectMemberships": 4,
+      "taskAssignees": 11
+    }
+  }
+]
+```
+
+---
+
+### GET /users/me
+
+Returns the full profile of the currently authenticated user, including their assigned tools, linked department and custom role, and activity counters. This endpoint always reflects the live database state, not just the JWT claims.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Any authenticated user.
+
+#### Response Fields
+
+<ResponseField name="id" type="integer">Unique user ID.</ResponseField>
+<ResponseField name="fullName" type="string">Full display name.</ResponseField>
+<ResponseField name="email" type="string">Email address.</ResponseField>
+<ResponseField name="role" type="string">System role (`ADMIN` or `EMPLOYEE`).</ResponseField>
+<ResponseField name="position" type="string | null">Job title.</ResponseField>
+<ResponseField name="documentNumber" type="string | null">Document number.</ResponseField>
+<ResponseField name="companyId" type="integer | null">Company ID.</ResponseField>
+<ResponseField name="createdAt" type="string">ISO 8601 account creation timestamp.</ResponseField>
+<ResponseField name="department" type="object | null">Linked department object (id, name).</ResponseField>
+<ResponseField name="roleRelation" type="object | null">Linked custom role object (id, name).</ResponseField>
+
+<ResponseField name="toolAssignments" type="array">
+  List of tools assigned to this user, ordered by most recently assigned.
+
+  <Expandable title="toolAssignment fields">
+    <ResponseField name="tool.id" type="integer">Tool ID.</ResponseField>
+    <ResponseField name="tool.name" type="string">Tool display name.</ResponseField>
+    <ResponseField name="tool.category" type="string">Tool category.</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 timestamp when the tool was assigned.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="_count" type="object">
+  Activity summary: `createdProjects` (integer), `projectMemberships` (integer), `taskAssignees` (integer).
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X GET https://mejoragemeseg-production.up.railway.app/users/me \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{
+  "id": 42,
+  "fullName": "Juan Pérez",
+  "email": "juan.perez@gemeseg.com",
+  "role": "EMPLOYEE",
+  "position": "Backend Engineer",
+  "documentNumber": "12345678",
+  "companyId": 1,
+  "createdAt": "2024-01-10T08:00:00.000Z",
+  "department": { "id": 2, "name": "Development" },
+  "roleRelation": null,
+  "toolAssignments": [
+    {
+      "tool": { "id": 7, "name": "VS Code", "category": "IDE" },
+      "createdAt": "2024-02-01T09:00:00.000Z"
+    }
+  ],
+  "_count": {
+    "createdProjects": 3,
+    "projectMemberships": 5,
+    "taskAssignees": 14
+  }
+}
+```
+
+---
+
+### GET /users/stats
+
+Returns aggregate statistics for all users within the authenticated admin's company: total count, active vs. inactive breakdown, and a per-role distribution.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** `ADMIN`
+
+#### Response Fields
+
+<ResponseField name="total" type="integer">
+  Total number of users in the company (active and inactive).
+</ResponseField>
+
+<ResponseField name="active" type="integer">
+  Number of users with `isActive: true`.
+</ResponseField>
+
+<ResponseField name="inactive" type="integer">
+  Number of users with `isActive: false` (soft-deleted).
+</ResponseField>
+
+<ResponseField name="byRole" type="array">
+  Per-role breakdown. Each entry contains `role` (string) and `count` (integer).
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X GET https://mejoragemeseg-production.up.railway.app/users/stats \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{
+  "total": 24,
+  "active": 22,
+  "inactive": 2,
+  "byRole": [
+    { "role": "EMPLOYEE", "count": 21 },
+    { "role": "ADMIN", "count": 3 }
+  ]
+}
+```
+
+---
+
+### GET /users/:id
+
+Returns the full profile of a specific user by their numeric ID. The caller's `companyId` must match the target user's `companyId`; otherwise a `403 Forbidden` is returned.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** `ADMIN`
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the user to retrieve.
+</ParamField>
+
+#### Response Fields
+
+Same shape as the response for `GET /users` array items (id, fullName, email, role, position, documentNumber, isActive, companyId, department, roleRelation, createdAt, `_count`).
+
+#### Example
+
+```bash
+curl -X GET https://mejoragemeseg-production.up.railway.app/users/55 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{
+  "id": 55,
+  "fullName": "María López",
+  "email": "maria.lopez@gemeseg.com",
+  "role": "EMPLOYEE",
+  "position": "QA Engineer",
+  "documentNumber": null,
+  "isActive": true,
+  "companyId": 1,
+  "department": { "id": 3, "name": "Engineering" },
+  "roleRelation": null,
+  "createdAt": "2024-03-15T10:00:00.000Z",
+  "_count": {
+    "createdProjects": 2,
+    "projectMemberships": 4,
+    "taskAssignees": 11
+  }
+}
+```
+
+---
+
+### PATCH /users/:id
+
+Partially updates a user record. All body fields are optional — only the fields you supply are changed. If a new `email` is provided and it conflicts with an existing account, a `409 Conflict` is returned. If a new `password` is provided it is re-hashed before storage. Company boundary is enforced: admins cannot edit users from another company.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** `ADMIN`
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the user to update.
+</ParamField>
+
+#### Request Body
+
+<ParamField body="fullName" type="string">
+  Updated display name.
+</ParamField>
+
+<ParamField body="email" type="string">
+  Updated email address. Must be unique.
+</ParamField>
+
+<ParamField body="password" type="string">
+  New plain-text password. Minimum 6 characters. Stored hashed.
+</ParamField>
+
+<ParamField body="role" type="string">
+  System role. Accepted values: `ADMIN`, `EMPLOYEE`.
+</ParamField>
+
+<ParamField body="documentNumber" type="string">
+  Updated document number.
+</ParamField>
+
+<ParamField body="position" type="string">
+  Updated job title.
+</ParamField>
+
+<ParamField body="departmentId" type="integer | null">
+  ID of the department to assign, or `null` to remove the department association.
+</ParamField>
+
+<ParamField body="roleId" type="integer | null">
+  ID of the custom role to assign, or `null` to clear it.
+</ParamField>
+
+<ParamField body="isActive" type="boolean">
+  Explicitly set active status. Prefer `DELETE /users/:id` for soft-deletion.
+</ParamField>
+
+#### Response Fields
+
+Returns the updated user object with the same shape as `GET /users/:id`, including resolved `department` and `roleRelation`.
+
+#### Example
+
+```bash
+curl -X PATCH https://mejoragemeseg-production.up.railway.app/users/55 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "position": "Senior QA Engineer",
+    "departmentId": 4
+  }'
+```
+
+```json
+{
+  "id": 55,
+  "fullName": "María López",
+  "email": "maria.lopez@gemeseg.com",
+  "role": "EMPLOYEE",
+  "position": "Senior QA Engineer",
+  "documentNumber": null,
+  "isActive": true,
+  "companyId": 1,
+  "department": { "id": 4, "name": "Quality Assurance" },
+  "roleRelation": null,
+  "createdAt": "2024-03-15T10:00:00.000Z"
+}
+```
+
+---
+
+### DELETE /users/:id
+
+Soft-deletes a user by setting their `isActive` field to `false`. The user record is **not** removed from the database. The user will no longer appear in active queries that filter `isActive: true`. Company boundary is enforced — admins cannot deactivate users from another company.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** `ADMIN`
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the user to deactivate.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="message" type="string">
+  Confirmation string: `"Usuario desactivado correctamente"`.
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X DELETE https://mejoragemeseg-production.up.railway.app/users/55 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{
+  "message": "Usuario desactivado correctamente"
+}
+```

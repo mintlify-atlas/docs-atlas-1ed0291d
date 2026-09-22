@@ -1,0 +1,635 @@
+---
+title: "Projects API: CRUD, Members, and Admin Statistics"
+sidebarTitle: "Projects"
+description: "REST endpoints for project management. Create projects, manage member roles, and retrieve admin statistics. Admin is auto-added as OWNER on every project."
+---
+
+The Projects API provides a full lifecycle for project management, from creation through member administration and Kanban task tracking. Any authenticated user can create a project — the creator is automatically assigned the `OWNER` role upon creation. ADMIN users are also automatically treated as project owners for every project in their company, giving them full management rights without needing an explicit membership record. Project visibility is membership-scoped: regular users only see projects they created or joined; admins see all company projects. Results are paginated at 10 projects per page.
+
+Tasks associated with a project are created and listed through the nested `POST /projects/:id/tasks` and `GET /projects/:id/tasks` endpoints documented below. For updating or deleting individual tasks, see the [Tasks API](/api/tasks).
+
+Base URL: `https://mejoragemeseg-production.up.railway.app`
+
+---
+
+### POST /projects
+
+Creates a new project. The authenticated user is automatically added as an `OWNER` member. The project status defaults to `ACTIVE` if not supplied.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Any authenticated user.
+
+#### Request Body
+
+<ParamField body="name" type="string" required>
+  Project display name. Must be non-empty.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional free-text description of the project.
+</ParamField>
+
+<ParamField body="startDate" type="string">
+  ISO 8601 date string (e.g. `"2024-04-01"`). Stored at noon UTC. Pass an empty string to leave unset.
+</ParamField>
+
+<ParamField body="endDate" type="string">
+  ISO 8601 date string for the planned end of the project. Stored at noon UTC.
+</ParamField>
+
+<ParamField body="status" type="string">
+  Initial project status. Accepted values: `ACTIVE`, `ON_HOLD`, `COMPLETED`, `CANCELLED`. Defaults to `ACTIVE`.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="id" type="integer">Unique project ID.</ResponseField>
+<ResponseField name="name" type="string">Project name.</ResponseField>
+<ResponseField name="description" type="string | null">Project description.</ResponseField>
+<ResponseField name="status" type="string">Current status.</ResponseField>
+<ResponseField name="startDate" type="string | null">ISO 8601 start date.</ResponseField>
+<ResponseField name="endDate" type="string | null">ISO 8601 end date.</ResponseField>
+<ResponseField name="createdAt" type="string">ISO 8601 creation timestamp.</ResponseField>
+
+<ResponseField name="createdBy" type="object">
+  Summary of the user who created the project: `id`, `fullName`, `email`.
+</ResponseField>
+
+<ResponseField name="members" type="array">
+  Initial member list (only the creator at creation time).
+
+  <Expandable title="Member object fields">
+    <ResponseField name="userId" type="integer">Member's user ID.</ResponseField>
+    <ResponseField name="role" type="string">Project role: `OWNER`, `MEMBER`, or `VIEWER`.</ResponseField>
+    <ResponseField name="user" type="object">User summary: `id`, `fullName`, `email`.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="_count" type="object">
+  Contains `tasks` (integer): total number of tasks attached to this project.
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/projects \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Website Redesign",
+    "description": "Full redesign of the corporate website",
+    "startDate": "2024-04-01",
+    "endDate": "2024-06-30",
+    "status": "ACTIVE"
+  }'
+```
+
+```json
+{
+  "id": 10,
+  "name": "Website Redesign",
+  "description": "Full redesign of the corporate website",
+  "status": "ACTIVE",
+  "startDate": "2024-04-01T12:00:00.000Z",
+  "endDate": "2024-06-30T12:00:00.000Z",
+  "createdAt": "2024-03-20T09:00:00.000Z",
+  "createdBy": { "id": 42, "fullName": "Juan Pérez", "email": "juan.perez@gemeseg.com" },
+  "members": [
+    {
+      "userId": 42,
+      "role": "OWNER",
+      "user": { "id": 42, "fullName": "Juan Pérez", "email": "juan.perez@gemeseg.com" }
+    }
+  ],
+  "_count": { "tasks": 0 }
+}
+```
+
+---
+
+### GET /projects
+
+Returns a paginated list of projects visible to the caller. ADMINs see all projects in their company. Other roles see only projects they created or are a member of. Results are ordered by `createdAt` descending, 10 items per page.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Any authenticated user.
+
+#### Query Parameters
+
+<ParamField query="status" type="string">
+  Filter by project status. Accepted values: `ACTIVE`, `ON_HOLD`, `COMPLETED`, `CANCELLED`.
+</ParamField>
+
+<ParamField query="page" type="integer">
+  Page number (1-based). Defaults to `1`.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="data" type="array">
+  Array of project summary objects (id, name, description, status, startDate, endDate, createdAt, createdBy, `_count` with `tasks` and `members`).
+</ResponseField>
+
+<ResponseField name="pagination" type="object">
+  Pagination metadata.
+
+  <Expandable title="pagination fields">
+    <ResponseField name="page" type="integer">Current page number.</ResponseField>
+    <ResponseField name="pageSize" type="integer">Items per page (always 10).</ResponseField>
+    <ResponseField name="total" type="integer">Total matching projects.</ResponseField>
+    <ResponseField name="totalPages" type="integer">Total number of pages.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X GET "https://mejoragemeseg-production.up.railway.app/projects?status=ACTIVE&page=1" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{
+  "data": [
+    {
+      "id": 10,
+      "name": "Website Redesign",
+      "description": "Full redesign of the corporate website",
+      "status": "ACTIVE",
+      "startDate": "2024-04-01T12:00:00.000Z",
+      "endDate": "2024-06-30T12:00:00.000Z",
+      "createdAt": "2024-03-20T09:00:00.000Z",
+      "createdBy": { "id": 42, "fullName": "Juan Pérez", "email": "juan.perez@gemeseg.com" },
+      "_count": { "tasks": 5, "members": 3 }
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "pageSize": 10,
+    "total": 1,
+    "totalPages": 1
+  }
+}
+```
+
+---
+
+### GET /projects/:id
+
+Returns the full detail of a single project including all members and their roles. If the caller belongs to a company and the project was created by a user from a different company, a `403 Forbidden` is returned.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Any authenticated user (company-scoped).
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the project to retrieve.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="id" type="integer">Project ID.</ResponseField>
+<ResponseField name="name" type="string">Project name.</ResponseField>
+<ResponseField name="description" type="string | null">Project description.</ResponseField>
+<ResponseField name="status" type="string">Current status.</ResponseField>
+<ResponseField name="startDate" type="string | null">ISO 8601 start date.</ResponseField>
+<ResponseField name="endDate" type="string | null">ISO 8601 end date.</ResponseField>
+<ResponseField name="createdAt" type="string">Creation timestamp.</ResponseField>
+<ResponseField name="createdBy" type="object">Creator summary: `id`, `fullName`, `email`.</ResponseField>
+<ResponseField name="members" type="array">Full member list with nested `user` objects and `role` strings.</ResponseField>
+<ResponseField name="_count" type="object">Contains `tasks` (integer).</ResponseField>
+
+#### Example
+
+```bash
+curl -X GET https://mejoragemeseg-production.up.railway.app/projects/10 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{
+  "id": 10,
+  "name": "Website Redesign",
+  "description": "Full redesign of the corporate website",
+  "status": "ACTIVE",
+  "startDate": "2024-04-01T12:00:00.000Z",
+  "endDate": "2024-06-30T12:00:00.000Z",
+  "createdAt": "2024-03-20T09:00:00.000Z",
+  "createdBy": { "id": 42, "fullName": "Juan Pérez", "email": "juan.perez@gemeseg.com" },
+  "members": [
+    {
+      "userId": 42,
+      "role": "OWNER",
+      "user": { "id": 42, "fullName": "Juan Pérez", "email": "juan.perez@gemeseg.com" }
+    },
+    {
+      "userId": 55,
+      "role": "MEMBER",
+      "user": { "id": 55, "fullName": "María López", "email": "maria.lopez@gemeseg.com" }
+    }
+  ],
+  "_count": { "tasks": 5 }
+}
+```
+
+---
+
+### GET /projects/admin/stats
+
+Returns aggregate statistics for all projects and tasks in the authenticated admin's company. Includes project counts grouped by status and task completion metrics.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** `ADMIN`
+
+#### Response Fields
+
+<ResponseField name="totalProjects" type="integer">
+  Total number of projects in the company.
+</ResponseField>
+
+<ResponseField name="byStatus" type="array">
+  Per-status project counts. Each entry: `{ status: string, count: integer }`.
+</ResponseField>
+
+<ResponseField name="tasks" type="object">
+  Task-level statistics.
+
+  <Expandable title="tasks fields">
+    <ResponseField name="tasks.total" type="integer">Total tasks across all company projects.</ResponseField>
+    <ResponseField name="tasks.completed" type="integer">Tasks with status `DONE`.</ResponseField>
+    <ResponseField name="tasks.completionRate" type="integer">Percentage of completed tasks (0–100).</ResponseField>
+    <ResponseField name="tasks.byStatus" type="array">Per-status task counts. Each entry: `{ status: string, count: integer }`.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X GET https://mejoragemeseg-production.up.railway.app/projects/admin/stats \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{
+  "totalProjects": 8,
+  "byStatus": [
+    { "status": "ACTIVE", "count": 5 },
+    { "status": "COMPLETED", "count": 2 },
+    { "status": "ON_HOLD", "count": 1 }
+  ],
+  "tasks": {
+    "total": 47,
+    "completed": 31,
+    "completionRate": 66,
+    "byStatus": [
+      { "status": "DONE", "count": 31 },
+      { "status": "IN_PROGRESS", "count": 9 },
+      { "status": "TODO", "count": 7 }
+    ]
+  }
+}
+```
+
+---
+
+### GET /projects/:id/tasks
+
+Returns all tasks belonging to the specified project, ordered by `createdAt` descending. Each task includes its list of assignees.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Any authenticated user.
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the project whose tasks should be listed.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="[]" type="array">
+  Array of task objects.
+
+  <Expandable title="Task object fields">
+    <ResponseField name="id" type="integer">Task ID.</ResponseField>
+    <ResponseField name="title" type="string">Task title.</ResponseField>
+    <ResponseField name="description" type="string | null">Task description.</ResponseField>
+    <ResponseField name="status" type="string">One of `TODO`, `IN_PROGRESS`, `IN_REVIEW`, `DONE`, `CANCELLED`.</ResponseField>
+    <ResponseField name="priority" type="string">One of `LOW`, `MEDIUM`, `HIGH`, `URGENT`.</ResponseField>
+    <ResponseField name="startDate" type="string | null">ISO 8601 start date.</ResponseField>
+    <ResponseField name="endDate" type="string | null">ISO 8601 end date.</ResponseField>
+    <ResponseField name="estimatedHours" type="number">Estimated hours for the task.</ResponseField>
+    <ResponseField name="projectId" type="integer">ID of the parent project.</ResponseField>
+    <ResponseField name="createdAt" type="string">ISO 8601 creation timestamp.</ResponseField>
+    <ResponseField name="assignees" type="array">List of `{ user: { id, fullName, email } }` objects.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X GET https://mejoragemeseg-production.up.railway.app/projects/10/tasks \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+[
+  {
+    "id": 201,
+    "title": "Design homepage mockup",
+    "description": "Create Figma mockup for the new homepage",
+    "status": "IN_PROGRESS",
+    "priority": "HIGH",
+    "startDate": "2024-04-02T12:00:00.000Z",
+    "endDate": "2024-04-10T12:00:00.000Z",
+    "estimatedHours": 8,
+    "projectId": 10,
+    "createdAt": "2024-04-01T10:00:00.000Z",
+    "assignees": [
+      { "user": { "id": 55, "fullName": "María López", "email": "maria.lopez@gemeseg.com" } }
+    ]
+  }
+]
+```
+
+---
+
+### POST /projects/:id/tasks
+
+Creates a new task within the specified project. The caller must be a project member with role `OWNER` or `MEMBER` — `VIEWER` members cannot create tasks. Defaults: `status` = `TODO`, `priority` = `MEDIUM`, `estimatedHours` = `0`.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Project member with role `OWNER` or `MEMBER`.
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the project in which to create the task.
+</ParamField>
+
+#### Request Body
+
+<ParamField body="title" type="string" required>
+  Task title.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Optional task description.
+</ParamField>
+
+<ParamField body="status" type="string">
+  Initial status. Accepted values: `TODO`, `IN_PROGRESS`, `IN_REVIEW`, `DONE`, `CANCELLED`. Defaults to `TODO`.
+</ParamField>
+
+<ParamField body="priority" type="string">
+  Task priority. Accepted values: `LOW`, `MEDIUM`, `HIGH`, `URGENT`. Defaults to `MEDIUM`.
+</ParamField>
+
+<ParamField body="assigneeIds" type="integer[]">
+  Array of user IDs to assign to this task. All users must be existing accounts.
+</ParamField>
+
+<ParamField body="startDate" type="string">
+  ISO 8601 date string for task start (e.g. `"2024-04-02"`).
+</ParamField>
+
+<ParamField body="endDate" type="string">
+  ISO 8601 date string for task deadline.
+</ParamField>
+
+<ParamField body="estimatedHours" type="number">
+  Estimated hours to complete. Defaults to `0`.
+</ParamField>
+
+#### Response Fields
+
+Returns the newly created task object (same shape as items in `GET /projects/:id/tasks`).
+
+#### Example
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/projects/10/tasks \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Design homepage mockup",
+    "description": "Create Figma mockup for the new homepage",
+    "priority": "HIGH",
+    "startDate": "2024-04-02",
+    "endDate": "2024-04-10",
+    "estimatedHours": 8,
+    "assigneeIds": [55]
+  }'
+```
+
+```json
+{
+  "id": 201,
+  "title": "Design homepage mockup",
+  "description": "Create Figma mockup for the new homepage",
+  "status": "TODO",
+  "priority": "HIGH",
+  "startDate": "2024-04-02T12:00:00.000Z",
+  "endDate": "2024-04-10T12:00:00.000Z",
+  "estimatedHours": 8,
+  "projectId": 10,
+  "createdAt": "2024-04-01T10:00:00.000Z",
+  "assignees": [
+    { "user": { "id": 55, "fullName": "María López", "email": "maria.lopez@gemeseg.com" } }
+  ]
+}
+```
+
+---
+
+### GET /projects/:id/members
+
+Returns all membership records for the specified project, including each member's user summary and project role.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Any authenticated user.
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the project whose member list to retrieve.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="[]" type="array">
+  Array of project member objects.
+
+  <Expandable title="Member object fields">
+    <ResponseField name="projectId" type="integer">Project ID.</ResponseField>
+    <ResponseField name="userId" type="integer">Member's user ID.</ResponseField>
+    <ResponseField name="role" type="string">Project role: `OWNER`, `MEMBER`, or `VIEWER`.</ResponseField>
+    <ResponseField name="user" type="object">User summary: `id`, `fullName`, `email`.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X GET https://mejoragemeseg-production.up.railway.app/projects/10/members \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+[
+  {
+    "projectId": 10,
+    "userId": 42,
+    "role": "OWNER",
+    "user": { "id": 42, "fullName": "Juan Pérez", "email": "juan.perez@gemeseg.com" }
+  },
+  {
+    "projectId": 10,
+    "userId": 55,
+    "role": "MEMBER",
+    "user": { "id": 55, "fullName": "María López", "email": "maria.lopez@gemeseg.com" }
+  }
+]
+```
+
+---
+
+### POST /projects/:id/members
+
+Adds a user to the project with a specified role. The caller must be either the project `OWNER` or a system `ADMIN`. The target user must be active and belong to the same company as the caller. Returns `403 Forbidden` if the user is already a member.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Project `OWNER` or system `ADMIN`.
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the project.
+</ParamField>
+
+#### Request Body
+
+<ParamField body="userId" type="integer" required>
+  ID of the user to add to the project.
+</ParamField>
+
+<ParamField body="role" type="string" required>
+  Role to assign to the new member. Accepted values: `OWNER`, `MEMBER`, `VIEWER`.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="projectId" type="integer">Project ID.</ResponseField>
+<ResponseField name="userId" type="integer">Added user's ID.</ResponseField>
+<ResponseField name="role" type="string">Assigned project role.</ResponseField>
+<ResponseField name="user" type="object">User summary: `id`, `fullName`, `email`.</ResponseField>
+
+#### Example
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/projects/10/members \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userId": 60,
+    "role": "MEMBER"
+  }'
+```
+
+```json
+{
+  "projectId": 10,
+  "userId": 60,
+  "role": "MEMBER",
+  "user": { "id": 60, "fullName": "Carlos Ruiz", "email": "carlos.ruiz@gemeseg.com" }
+}
+```
+
+---
+
+### DELETE /projects/:id/members/:userId
+
+Removes a member from the project. The caller must be the project `OWNER` or system `ADMIN`. The last `OWNER` of a project cannot be removed — at least one owner must always remain.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Project `OWNER` or system `ADMIN`.
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the project.
+</ParamField>
+
+<ParamField path="userId" type="integer" required>
+  Numeric ID of the user to remove from the project.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="message" type="string">
+  Confirmation string: `"Miembro eliminado del proyecto"`.
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X DELETE https://mejoragemeseg-production.up.railway.app/projects/10/members/60 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{
+  "message": "Miembro eliminado del proyecto"
+}
+```
+
+---
+
+### PATCH /projects/:id/members/:userId/role
+
+Changes the project role of an existing member. Only system `ADMIN` users can call this endpoint. Downgrading the sole remaining `OWNER` is blocked — a `403 Forbidden` is returned if the operation would leave the project with no owners.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** System `ADMIN`.
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the project.
+</ParamField>
+
+<ParamField path="userId" type="integer" required>
+  Numeric ID of the member whose role should be updated.
+</ParamField>
+
+#### Request Body
+
+<ParamField body="role" type="string" required>
+  New role to assign. Accepted values: `OWNER`, `MEMBER`, `VIEWER`.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="projectId" type="integer">Project ID.</ResponseField>
+<ResponseField name="userId" type="integer">Affected user's ID.</ResponseField>
+<ResponseField name="role" type="string">Updated project role.</ResponseField>
+<ResponseField name="user" type="object">User summary: `id`, `fullName`, `email`.</ResponseField>
+
+#### Example
+
+```bash
+curl -X PATCH https://mejoragemeseg-production.up.railway.app/projects/10/members/55/role \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{ "role": "OWNER" }'
+```
+
+```json
+{
+  "projectId": 10,
+  "userId": 55,
+  "role": "OWNER",
+  "user": { "id": 55, "fullName": "María López", "email": "maria.lopez@gemeseg.com" }
+}
+```

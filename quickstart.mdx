@@ -1,47 +1,148 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with MejoraGemeseg Locally"
+sidebarTitle: "Quickstart"
+description: "Set up MejoraGemeseg on your machine with Node.js, PostgreSQL, and seed data in under 10 minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+MejoraGemeseg is a monorepo with a NestJS backend and a React + Vite frontend. The fastest way to get a fully functional local environment is to start PostgreSQL and Redis via Docker, then run the backend and frontend in separate terminals. The seed script creates all test users and sample projects automatically.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
 
-    ```bash
-    npm install your-package
-    ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+### Install prerequisites
 
-    ```bash
-    your-cli init
-    ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+You need the following tools before running anything:
 
-    ```bash
-    your-cli start
-    ```
-  </Step>
-</Steps>
+- **Node.js 18 or later** — [nodejs.org](https://nodejs.org)
+- **PostgreSQL 17** — installed locally, or via Docker (recommended below)
+- **Docker** (optional but recommended) — [docker.com](https://docker.com)
 
 <Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
-
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+  If you use the Docker path you do not need a separate PostgreSQL installation. Docker Compose spins up both `postgres:16-alpine` and `redis:7-alpine` for you.
 </Tip>
+
+### Start the database (Docker)
+
+From the repo root, start PostgreSQL and Redis using the provided Compose file:
+
+```bash
+docker compose up -d db redis
+```
+
+This starts:
+- **`gemeseg-postgres`** on `localhost:5432` — user `postgres`, password `postgres`, database `gemeseg`
+- **`gemeseg-redis`** on `localhost:6379`
+
+If you prefer a local PostgreSQL instance, create a database named `gemeseg` and update `DATABASE_URL` in the next step accordingly.
+
+### Configure the backend environment
+
+Copy the example environment file and fill in the required values:
+
+```bash
+cd backend
+cp ../.env.example .env
+```
+
+Open `.env` and set at minimum:
+
+```bash
+NODE_ENV=development
+PORT=3000
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/gemeseg?schema=public
+REDIS_HOST=localhost
+REDIS_PORT=6379
+JWT_SECRET=your-jwt-secret          # any random string, keep it secret
+FRONTEND_URL=http://localhost:5173
+GITHUB_TOKEN=                        # optional — enables gpt-4o-mini AI chat
+```
+
+<Note>
+  `GITHUB_TOKEN` is optional. Without it the AI chat falls back to a set of predefined mock responses. You can still use all other modules normally.
+</Note>
+
+### Install backend dependencies and run migrations
+
+```bash
+# still inside backend/
+npm install
+npx prisma migrate dev
+```
+
+Prisma reads `DATABASE_URL` from `.env`, applies all pending migrations, and generates the typed Prisma Client.
+
+### Seed test data
+
+```bash
+node prisma/seed.js
+```
+
+The seed script creates the following users and sample projects:
+
+**Super Admin (all companies)**
+
+| Email | Password | Role |
+|-------|----------|------|
+| `admin@general.com` | `admin2026` | ADMIN |
+
+**GEMESEG**
+
+| Email | Password | Role | Position |
+|-------|----------|------|----------|
+| `admin@gemeseg.com` | `gemeseg2026` | ADMIN | Administrador del Sistema |
+| `hugo@gemeseg.com` | `gemeseg2026` | MANAGER | Gerente General |
+| `marketing@gemeseg.com` | `gemeseg2026` | EMPLOYEE | Analista de Marketing Digital |
+| `nayelli@gemeseg.com` | `gemeseg2026` | EMPLOYEE | Analista de Recursos Humanos |
+| `sistemas@gemeseg.com` | `gemeseg2026` | EMPLOYEE | Analista de Sistemas |
+
+**Mikacao S.A.**
+
+| Email | Password | Role |
+|-------|----------|------|
+| `admin@mikacao.com` | `mikacao2026` | ADMIN |
+
+Sample projects created: *Landings*, *Mejora GEMESEG*, *Cotizador*, *Plataforma GEMESEG v2*, *Migración a Google Cloud*.
+
+### Start the backend dev server
+
+```bash
+npm run start:dev
+```
+
+NestJS starts in watch mode. Once you see `Application is running on: http://[::1]:3000` the backend is ready.
+
+- **API base:** `http://localhost:3000/api`
+- **Swagger UI:** `http://localhost:3000/docs`
+- **Health check:** `http://localhost:3000/health`
+
+### Install and start the frontend
+
+Open a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Vite starts on **`http://localhost:5173`**. The frontend reads `VITE_API_URL` from `frontend/.env` — if that file does not exist, create it:
+
+```bash
+# frontend/.env
+VITE_API_URL=http://localhost:3000
+```
+
+### Verify everything is running
+
+| Check | URL | Expected |
+|-------|-----|----------|
+| Backend health | `http://localhost:3000/health` | `{"status":"ok","timestamp":"..."}` |
+| Swagger UI | `http://localhost:3000/docs` | Interactive API explorer |
+| Frontend login | `http://localhost:5173` | GEMESEG login page |
+
+Log in with `admin@gemeseg.com` / `gemeseg2026` to access the full admin panel, or use `admin@general.com` / `admin2026` to act as Super Admin across all tenants.
+
+</Steps>
+
+<Warning>
+  Never commit `.env` to version control — it is already listed in `.gitignore`. In production, set all environment variables through the Railway and Vercel dashboards directly.
+</Warning>

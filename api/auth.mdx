@@ -1,0 +1,252 @@
+---
+title: "Authentication API: Login, Register, and Profile Endpoints"
+sidebarTitle: "Auth"
+description: "REST endpoints for JWT authentication. POST /auth/login returns a signed token. POST /auth/register is restricted to company email domains."
+---
+
+The Authentication API handles user registration, login, and profile retrieval for MejoraGemeseg. All tokens are signed JWTs that expire after **7 days**. The JWT payload carries `sub` (user ID), `email`, `role`, and `companyId`, which are used throughout the API to scope every request to the correct company. Registration is domain-gated — only email addresses whose domain matches a registered `@gemeseg.com` company record are accepted. All other domains are rejected with a `403 Forbidden`.
+
+Base URL: `https://mejoragemeseg-production.up.railway.app`
+
+---
+
+### POST /auth/register
+
+Registers a new user. The email domain must match a company domain registered in the system (e.g. `@gemeseg.com`). If a user with the given email already exists, a `409 Conflict` is returned. Passwords are hashed with bcrypt (salt rounds: 10) before storage and are **never** returned in any response.
+
+**Authentication:** None required.
+
+#### Request Body
+
+<ParamField body="email" type="string" required>
+  Corporate email address. Must end with a registered company domain (e.g. `@gemeseg.com`). Validated as a proper email format.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  Plain-text password for the new account. Minimum 6 characters. Stored hashed — never returned.
+</ParamField>
+
+<ParamField body="firstName" type="string" required>
+  User's first name. Combined with `lastName` to form `fullName` on the stored record.
+</ParamField>
+
+<ParamField body="lastName" type="string" required>
+  User's last name. Combined with `firstName` to form `fullName` on the stored record.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="token" type="string">
+  Signed JWT string. Valid for 7 days. Pass this as `Authorization: Bearer <token>` on protected requests.
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  Object containing the newly created user's public fields.
+
+  <Expandable title="user fields">
+    <ResponseField name="user.id" type="integer">
+      Unique numeric identifier of the user.
+    </ResponseField>
+    <ResponseField name="user.email" type="string">
+      The registered email address.
+    </ResponseField>
+    <ResponseField name="user.fullName" type="string">
+      Concatenation of `firstName` and `lastName` provided at registration.
+    </ResponseField>
+    <ResponseField name="user.role" type="string">
+      System role assigned to the user. Defaults to `EMPLOYEE` on self-registration.
+    </ResponseField>
+    <ResponseField name="user.companyId" type="integer | null">
+      ID of the company resolved from the email domain, or `null` if no matching company was found.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "juan.perez@gemeseg.com",
+    "password": "secreto123",
+    "firstName": "Juan",
+    "lastName": "Pérez"
+  }'
+```
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": {
+    "id": 42,
+    "email": "juan.perez@gemeseg.com",
+    "fullName": "Juan Pérez",
+    "role": "EMPLOYEE",
+    "companyId": 1
+  }
+}
+```
+
+---
+
+### POST /auth/login
+
+Authenticates an existing user with email and password. Returns a signed JWT alongside the user's public profile. Returns `401 Unauthorized` if the credentials are invalid.
+
+**Authentication:** None required.
+
+#### Request Body
+
+<ParamField body="email" type="string" required>
+  The registered email address of the user.
+</ParamField>
+
+<ParamField body="password" type="string" required>
+  The user's plain-text password. Minimum 6 characters.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="token" type="string">
+  Signed JWT string. Valid for 7 days.
+</ResponseField>
+
+<ResponseField name="user" type="object">
+  Public profile of the authenticated user.
+
+  <Expandable title="user fields">
+    <ResponseField name="user.id" type="integer">
+      Unique numeric identifier of the user.
+    </ResponseField>
+    <ResponseField name="user.email" type="string">
+      The user's registered email address.
+    </ResponseField>
+    <ResponseField name="user.fullName" type="string">
+      Full display name of the user.
+    </ResponseField>
+    <ResponseField name="user.role" type="string">
+      System role. One of `ADMIN`, `EMPLOYEE`.
+    </ResponseField>
+    <ResponseField name="user.companyId" type="integer | null">
+      ID of the company the user belongs to, or `null` for super-admin accounts.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "juan.perez@gemeseg.com",
+    "password": "secreto123"
+  }'
+```
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "user": {
+    "id": 42,
+    "email": "juan.perez@gemeseg.com",
+    "fullName": "Juan Pérez",
+    "role": "EMPLOYEE",
+    "companyId": 1
+  }
+}
+```
+
+---
+
+### GET /auth/profile
+
+Returns the JWT payload of the currently authenticated user. This endpoint decodes the token provided in the `Authorization` header and returns the claims as a JSON object. Useful for verifying token validity and reading the current session's role and company.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`
+
+#### Response Fields
+
+<ResponseField name="userId" type="integer">
+  The user's numeric ID (derived from the JWT `sub` claim).
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  Email address embedded in the token.
+</ResponseField>
+
+<ResponseField name="role" type="string">
+  The user's system role at the time the token was issued. One of `ADMIN`, `EMPLOYEE`.
+</ResponseField>
+
+<ResponseField name="companyId" type="integer | null">
+  Company ID embedded in the token, or `null` for super-admin accounts.
+</ResponseField>
+
+<ResponseField name="iat" type="integer">
+  Unix timestamp of when the token was issued.
+</ResponseField>
+
+<ResponseField name="exp" type="integer">
+  Unix timestamp of when the token expires (7 days after `iat`).
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X GET https://mejoragemeseg-production.up.railway.app/auth/profile \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{
+  "userId": 42,
+  "email": "juan.perez@gemeseg.com",
+  "role": "EMPLOYEE",
+  "companyId": 1,
+  "iat": 1710000000,
+  "exp": 1710604800
+}
+```
+
+---
+
+### POST /auth/forgot-password
+
+Resets the password for an existing account. The user must supply their registered email and a new password. The new password is hashed and stored immediately — there is no email verification step. Returns `401 Unauthorized` if no account exists for the given email.
+
+**Authentication:** None required.
+
+#### Request Body
+
+<ParamField body="email" type="string" required>
+  The registered email address of the account whose password should be reset.
+</ParamField>
+
+<ParamField body="newPassword" type="string" required>
+  The desired new password. Minimum 7 characters.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="message" type="string">
+  Confirmation string: `"Contraseña actualizada correctamente"`.
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/auth/forgot-password \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "juan.perez@gemeseg.com",
+    "newPassword": "nuevaClave456"
+  }'
+```
+
+```json
+{
+  "message": "Contraseña actualizada correctamente"
+}
+```

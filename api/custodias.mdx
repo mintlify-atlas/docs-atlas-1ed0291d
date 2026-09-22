@@ -1,0 +1,525 @@
+---
+title: "Custodias API: Transport Orders, Payroll, and PDF Exports"
+sidebarTitle: "Custodias"
+description: "REST endpoints for security transport order management, state transitions, payroll calculation, and PDFKit-generated document exports."
+---
+
+The Custodias module manages the full lifecycle of security transport orders (custodias) for Gemeseg. It covers three service types — **HACIENDA**, **PUERTO**, and **VIP** — each with its own rate structure. Orders progress through a three-state workflow (`LISTO_PARA_CUSTODIAR` → `EN_CAMINO` → `LLEGO`), and only orders that have reached `LLEGO` are counted toward payroll. All endpoints require a valid JWT and the caller must have **CUSTODIAS** section permission.
+
+**Base URL:** `https://mejoragemeseg-production.up.railway.app`
+
+**Authentication:** All endpoints require `Authorization: Bearer <jwt_token>`.
+
+---
+
+## Custodia Types & Rates
+
+| Type | Rate / person | Total (3 people) |
+|------|--------------|-----------------|
+| `HACIENDA` | $20 | $60 |
+| `PUERTO` | $10 | $30 |
+| `VIP` | $23 | $69 |
+
+---
+
+### POST /custodias
+
+Creates a new transport order. The `tipoCustodia` value determines which additional fields are required: **HACIENDA** requires `nombreHacienda` and `cantidadSacos`; **PUERTO** accepts a `contenedores` array; **VIP** has no extra fields.
+
+**Authentication:** Required (`write` permission on CUSTODIAS section)
+
+#### Request Body
+
+<ParamField body="numeroGuia" type="string" required>
+  Guide or tracking number for the transport order (e.g. `G-0011`).
+</ParamField>
+
+<ParamField body="tipoCustodia" type="string" required>
+  Service type. Allowed values: `HACIENDA`, `PUERTO`, `VIP`.
+</ParamField>
+
+<ParamField body="choferName" type="string" required>
+  Full name of the driver.
+</ParamField>
+
+<ParamField body="choferCedula" type="string">
+  National ID (cédula) of the driver.
+</ParamField>
+
+<ParamField body="custodio1Name" type="string" required>
+  Full name of the first security guard.
+</ParamField>
+
+<ParamField body="custodio1Cedula" type="string">
+  National ID of the first security guard.
+</ParamField>
+
+<ParamField body="custodio2Name" type="string" required>
+  Full name of the second security guard.
+</ParamField>
+
+<ParamField body="custodio2Cedula" type="string">
+  National ID of the second security guard.
+</ParamField>
+
+<ParamField body="cliente" type="string">
+  Client name associated with the order.
+</ParamField>
+
+<ParamField body="placa" type="string">
+  Vehicle license plate.
+</ParamField>
+
+<ParamField body="direccionSalida" type="string">
+  Departure address.
+</ParamField>
+
+<ParamField body="direccionLlegada" type="string">
+  Arrival address.
+</ParamField>
+
+<ParamField body="fechaHoraSalida" type="string (ISO 8601)">
+  Departure datetime, e.g. `2024-07-15T08:00:00Z`.
+</ParamField>
+
+<ParamField body="fechaHoraLlegada" type="string (ISO 8601)">
+  Arrival datetime, e.g. `2024-07-15T14:00:00Z`.
+</ParamField>
+
+<ParamField body="observaciones" type="string">
+  Free-text notes or observations.
+</ParamField>
+
+<ParamField body="nombreHacienda" type="string">
+  **Required when `tipoCustodia` is `HACIENDA`.** Name of the farm/hacienda.
+</ParamField>
+
+<ParamField body="cantidadSacos" type="number (≥ 1)">
+  **Required when `tipoCustodia` is `HACIENDA`.** Number of sacks being transported.
+</ParamField>
+
+<ParamField body="contenedores" type="string[]">
+  **Used when `tipoCustodia` is `PUERTO`.** Array of container identifiers (container number, seal, guide, BL).
+</ParamField>
+
+#### Response
+
+Returns the newly created `Custodia` object, including the auto-assigned `id`, `estado` (`LISTO_PARA_CUSTODIAR`), and timestamps.
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/custodias \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "numeroGuia": "G-0011",
+    "tipoCustodia": "HACIENDA",
+    "choferName": "Carlos Reyes",
+    "choferCedula": "0901234567",
+    "custodio1Name": "Juan Mora",
+    "custodio1Cedula": "0912345678",
+    "custodio2Name": "Pedro Loor",
+    "custodio2Cedula": "0923456789",
+    "cliente": "Hacienda El Palmar",
+    "placa": "GBA-1234",
+    "direccionSalida": "Guayaquil, Km 12",
+    "direccionLlegada": "Vinces, Los Ríos",
+    "fechaHoraSalida": "2024-07-15T08:00:00Z",
+    "fechaHoraLlegada": "2024-07-15T14:00:00Z",
+    "nombreHacienda": "El Palmar",
+    "cantidadSacos": 120
+  }'
+```
+
+---
+
+### GET /custodias
+
+Returns a paginated list of transport orders for the caller's company. All query parameters are optional and can be combined.
+
+**Authentication:** Required (`view` permission on CUSTODIAS section)
+
+#### Query Parameters
+
+<ParamField query="fechaInicio" type="string (ISO 8601)">
+  Filter orders with `fechaHoraSalida` on or after this date.
+</ParamField>
+
+<ParamField query="fechaFin" type="string (ISO 8601)">
+  Filter orders with `fechaHoraSalida` on or before this date.
+</ParamField>
+
+<ParamField query="tipo" type="string">
+  Filter by `tipoCustodia`. One of: `HACIENDA`, `PUERTO`, `VIP`.
+</ParamField>
+
+<ParamField query="estado" type="string">
+  Filter by current state. One of: `LISTO_PARA_CUSTODIAR`, `EN_CAMINO`, `LLEGO`.
+</ParamField>
+
+#### Response
+
+<ResponseField name="[].id" type="number">
+  Unique numeric identifier.
+</ResponseField>
+
+<ResponseField name="[].numeroGuia" type="string">
+  Guide number (e.g. `G-0011`).
+</ResponseField>
+
+<ResponseField name="[].tipoCustodia" type="string">
+  `HACIENDA` | `PUERTO` | `VIP`.
+</ResponseField>
+
+<ResponseField name="[].estado" type="string">
+  Current workflow state.
+</ResponseField>
+
+<ResponseField name="[].choferName" type="string">
+  Driver's full name.
+</ResponseField>
+
+<ResponseField name="[].custodio1Name" type="string">
+  First guard's full name.
+</ResponseField>
+
+<ResponseField name="[].custodio2Name" type="string">
+  Second guard's full name.
+</ResponseField>
+
+<ResponseField name="[].cliente" type="string">
+  Client name.
+</ResponseField>
+
+<ResponseField name="[].placa" type="string">
+  Vehicle plate.
+</ResponseField>
+
+<ResponseField name="[].fechaHoraSalida" type="string">
+  Departure datetime (ISO 8601).
+</ResponseField>
+
+<ResponseField name="[].fechaHoraLlegada" type="string">
+  Arrival datetime (ISO 8601).
+</ResponseField>
+
+<ResponseField name="[].createdAt" type="string">
+  Record creation timestamp.
+</ResponseField>
+
+---
+
+### GET /custodias/dashboard
+
+Returns KPI metrics for the current company. An optional `mes` filter narrows the results to a specific month.
+
+**Authentication:** Required (`view` permission on CUSTODIAS section)
+
+#### Query Parameters
+
+<ParamField query="mes" type="string">
+  Month filter in `YYYY-MM` format (e.g. `2024-07`). Defaults to the current month.
+</ParamField>
+
+#### Response
+
+<ResponseField name="total_viajes" type="number">
+  Total number of completed orders (`LLEGO`) in the period.
+</ResponseField>
+
+<ResponseField name="total_nomina_usd" type="number">
+  Total payroll cost in USD for the period.
+</ResponseField>
+
+<ResponseField name="empleados_activos" type="number">
+  Number of distinct workers (drivers + guards) with at least one completed order.
+</ResponseField>
+
+<ResponseField name="por_tipo" type="object">
+  Breakdown of orders by type. Keys: `HACIENDA`, `PUERTO`, `VIP`. Values are counts.
+</ResponseField>
+
+<ResponseField name="por_estado" type="object">
+  Breakdown of orders by state. Keys: `LISTO_PARA_CUSTODIAR`, `EN_CAMINO`, `LLEGO`.
+</ResponseField>
+
+```bash
+curl "https://mejoragemeseg-production.up.railway.app/custodias/dashboard?mes=2024-07" \
+  -H "Authorization: Bearer <jwt_token>"
+```
+
+---
+
+### GET /custodias/trabajador
+
+Returns the list of completed trips and total earnings for a single worker identified by their national ID.
+
+**Authentication:** Required (`view` permission on CUSTODIAS section)
+
+#### Query Parameters
+
+<ParamField query="cedula" type="string" required>
+  Worker's national ID number.
+</ParamField>
+
+<ParamField query="mes" type="string">
+  Month filter in `YYYY-MM` format. Defaults to the current month.
+</ParamField>
+
+#### Response
+
+<ResponseField name="nombre" type="string">
+  Worker's full name.
+</ResponseField>
+
+<ResponseField name="cedula" type="string">
+  Worker's national ID.
+</ResponseField>
+
+<ResponseField name="viajes" type="array">
+  Array of completed trip records for the worker.
+</ResponseField>
+
+<ResponseField name="total_hacienda" type="number">
+  Number of HACIENDA trips.
+</ResponseField>
+
+<ResponseField name="total_puerto" type="number">
+  Number of PUERTO trips.
+</ResponseField>
+
+<ResponseField name="total_vip" type="number">
+  Number of VIP trips.
+</ResponseField>
+
+<ResponseField name="total_usd" type="number">
+  Total earnings in USD.
+</ResponseField>
+
+---
+
+### GET /custodias/:id
+
+Returns the full detail of a single transport order.
+
+**Authentication:** Required (`view` permission on CUSTODIAS section)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Numeric ID of the custodia record.
+</ParamField>
+
+#### Response
+
+Returns the full `Custodia` object including all personnel, addresses, timestamps, and type-specific fields (`nombreHacienda`, `cantidadSacos`, `contenedores`).
+
+---
+
+### PATCH /custodias/:id/estado
+
+Advances a transport order through its state machine. The only valid transitions are `LISTO_PARA_CUSTODIAR` → `EN_CAMINO` → `LLEGO`. Payroll is calculated only for orders in state `LLEGO`.
+
+**Authentication:** Required (`write` permission on CUSTODIAS section)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Numeric ID of the custodia record to update.
+</ParamField>
+
+#### Request Body
+
+<ParamField body="estado" type="string" required>
+  New state. Must be one of: `LISTO_PARA_CUSTODIAR`, `EN_CAMINO`, `LLEGO`.
+</ParamField>
+
+#### Response
+
+Returns the updated `Custodia` object with the new `estado` value.
+
+```bash
+curl -X PATCH https://mejoragemeseg-production.up.railway.app/custodias/42/estado \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "estado": "EN_CAMINO" }'
+```
+
+---
+
+### DELETE /custodias/:id
+
+Permanently removes a transport order record. This action is irreversible.
+
+**Authentication:** Required (`write` permission on CUSTODIAS section)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Numeric ID of the custodia to delete.
+</ParamField>
+
+#### Response
+
+Returns the deleted `Custodia` object.
+
+---
+
+### GET /custodias/:id/pdf
+
+Generates and streams a PDF document for a single transport order. The PDF is generated with PDFKit on LETTER paper and includes all order fields plus a signature block for Client, Driver, Guard 1, and Guard 2.
+
+**Authentication:** Required (`view` permission on CUSTODIAS section)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Numeric ID of the custodia.
+</ParamField>
+
+#### Response
+
+Binary PDF stream with headers:
+- `Content-Type: application/pdf`
+- `Content-Disposition: inline; filename="orden_custodia_<guia>.pdf"`
+
+```bash
+curl "https://mejoragemeseg-production.up.railway.app/custodias/42/pdf" \
+  -H "Authorization: Bearer <jwt_token>" \
+  --output orden_custodia_G-0042.pdf
+```
+
+---
+
+### GET /custodias/available-custodios
+
+Returns the list of employees available for assignment as drivers or guards. Employees are sourced from the `EmployeeDriveFolder` records with `folderType = 'CUSTODIAS'` for the caller's company.
+
+**Authentication:** Required (`view` permission on CUSTODIAS section)
+
+#### Response
+
+<ResponseField name="[].id" type="number">
+  Employee record ID.
+</ResponseField>
+
+<ResponseField name="[].nombre" type="string">
+  Full name of the employee.
+</ResponseField>
+
+<ResponseField name="[].cedula" type="string">
+  National ID of the employee.
+</ResponseField>
+
+<ResponseField name="[].estado" type="string">
+  Fixed display value `"Inscrito"`.
+</ResponseField>
+
+---
+
+### GET /custodias/nomina
+
+Returns the full payroll matrix for a given date range. Only orders in state `LLEGO` are included. The response groups earnings per worker (driver, guard 1, guard 2) with a breakdown by type (HACIENDA/PUERTO/VIP) and a chronological pivot table.
+
+**Authentication:** Required (`view` permission on CUSTODIAS section)
+
+#### Query Parameters
+
+<ParamField query="fechaInicio" type="string (ISO 8601)" required>
+  Start of the payroll period.
+</ParamField>
+
+<ParamField query="fechaFin" type="string (ISO 8601)" required>
+  End of the payroll period.
+</ParamField>
+
+#### Response
+
+<ResponseField name="fechas" type="string[]">
+  Ordered list of dates in the period that have at least one completed trip.
+</ResponseField>
+
+<ResponseField name="empleados_detalle" type="array">
+  Per-worker objects containing `nombre`, `cedula`, `hacienda_count`, `puerto_count`, `vip_count`, `total_usd`.
+</ResponseField>
+
+<ResponseField name="matriz" type="object">
+  Pivot object keyed by worker name. Each value is an object keyed by date with `rol` (`chofer` | `custodio`) and the trip type.
+</ResponseField>
+
+<ResponseField name="gran_total_usd" type="number">
+  Sum of all worker earnings in the period.
+</ResponseField>
+
+---
+
+### GET /custodias/nomina/pdf
+
+Exports payroll data as a PDF. Three modes are available depending on query parameters:
+
+| Parameters | PDF type | Paper |
+|------------|----------|-------|
+| `cedula=<id>` | Individual payment slip | LETTER |
+| `todos=true` | Full payroll for all workers | LETTER (multi-page) |
+| _(none)_ | Chronological matrix | LEGAL landscape |
+
+**Authentication:** Required (`view` permission on CUSTODIAS section)
+
+#### Query Parameters
+
+<ParamField query="fechaInicio" type="string (ISO 8601)" required>
+  Start of the payroll period.
+</ParamField>
+
+<ParamField query="fechaFin" type="string (ISO 8601)" required>
+  End of the payroll period.
+</ParamField>
+
+<ParamField query="cedula" type="string">
+  When provided, generates an individual payment slip for this worker's national ID.
+</ParamField>
+
+<ParamField query="todos" type="string">
+  When set to `"true"`, generates a combined PDF for every worker in the period.
+</ParamField>
+
+#### Response
+
+Binary PDF stream with `Content-Type: application/pdf`.
+
+```bash
+# Individual payment slip
+curl "https://mejoragemeseg-production.up.railway.app/custodias/nomina/pdf?fechaInicio=2024-07-01&fechaFin=2024-07-31&cedula=0901234567" \
+  -H "Authorization: Bearer <jwt_token>" \
+  --output rol_pago.pdf
+```
+
+---
+
+### POST /custodias/gemebot/query
+
+Sends a natural-language query to the GEME-BOT assistant, which interprets keyword or SQL-style questions against the Custodias data.
+
+**Authentication:** Required (`write` permission on CUSTODIAS section)
+
+#### Request Body
+
+<ParamField body="mensaje" type="string" required>
+  Natural-language or keyword query, e.g. `"viajes de julio por tipo"`.
+</ParamField>
+
+#### Response
+
+<ResponseField name="respuesta" type="string">
+  Formatted text answer from the bot.
+</ResponseField>
+
+<ResponseField name="datos" type="any">
+  Optional structured data payload accompanying the answer.
+</ResponseField>
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/custodias/gemebot/query \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{ "mensaje": "¿Cuántos viajes HACIENDA hubo en julio 2024?" }'
+```

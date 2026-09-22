@@ -1,0 +1,272 @@
+---
+title: "Guard Management: Assignments, Movements, and Personnel History"
+sidebarTitle: "Guardias"
+description: "Track active guards, their entity assignments synced from Google Drive, entry/exit movements, and the combined history timeline."
+---
+
+The **Listado de Guardias** page at `/rrhh/guardias` (`GuardiasList.tsx`) is the central hub for guard management in MejoraGemeseg. It is not a passive read-only list — it hosts the Drive sync button, the personal data editor, the exit action, and the configuration modals for Drive folders and custom fields. Everything that happens to an active guard passes through or is visible from this page.
+
+## Guard Identity
+
+Guards do not have a dedicated master table. Their identity is anchored by the `cedula` field across multiple tables: `EmployeeDriveFolder`, `GuardiaFichaPersonal`, `AsignacionGuardia`, `MovimientoPersonal`, and `Contract`. The `EmployeeDriveFolder` record is created (and updated) exclusively by the Drive sync; it is never deleted, even after a guard exits.
+
+```prisma
+model EmployeeDriveFolder {
+  id           Int       @id @default(autoincrement())
+  employeeName String
+  cedula       String
+  puesto       String?   // only for PERSONAL_ADMIN folders
+  folderId     String    // stable Drive folder ID (resists renames)
+  folderUrl    String
+  folderType   String    @default("PERSONAL")
+  lastSyncAt   DateTime?
+  companyId    Int
+
+  @@unique([companyId, cedula])
+}
+```
+
+## Personal Data — `GuardiaFichaPersonal`
+
+Each guard has an editable personal record managed through the **`GuardiaFichaModal.tsx`** overlay in Listado de Guardias. This is the authoritative source for data that auto-fills HR documents.
+
+```prisma
+model GuardiaFichaPersonal {
+  cedula                     String
+  companyId                  Int
+  telefono                   String?
+  email                      String?
+  direccion                  String?
+  fechaNacimiento            DateTime?
+  contactoEmergenciaNombre   String?
+  contactoEmergenciaTelefono String?
+  // Labor fields used for contract auto-fill
+  horario                    String?
+  puestoFormal               String?
+  salarioAcordado            Float?
+  // Drive file ID of the Datos_Personales.json written during sync
+  driveFileId                String?
+  // Custom field values keyed by PersonalFieldDefinition.key
+  camposPersonalizados       Json      @default("{}")
+  updatedAt                  DateTime  @updatedAt
+
+  @@unique([companyId, cedula])
+}
+```
+
+Endpoints:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/personal/guardia-ficha/:cedula` | Fetch the personal record for a guard |
+| `PATCH` | `/personal/guardia-ficha/:cedula` | Update phone, address, birthdate, emergency contact, horario, puestoFormal, salarioAcordado, camposPersonalizados |
+
+<Note>
+On every **"Sincronizar Drive"** call, `syncEntidadesFolder` reads `GuardiaFichaPersonal` and writes its contents as `Datos_Personales.json` into the guard's Drive folder. The file in Drive is a **read-only mirror** — the system never reads it back. Failures writing this file are reported in the sync result's `errors` array but do not interrupt the rest of the sync.
+</Note>
+
+### Custom Fields (`PersonalFieldDefinition`)
+
+RRHH can add extra fields to every guard's personal card without touching code. These are configured from the **"Configurar campos"** button (opens `PersonalFieldsConfigModal.tsx`, `scope='GUARDIA'`). Fields are grouped by category:
+
+```prisma
+model PersonalFieldDefinition {
+  key       String  // stable slug, never changes after creation
+  label     String  // display name, editable
+  type      String  // 'TEXT' | 'NUMBER' | 'DATE'
+  scope     String  @default("GUARDIA")  // 'GUARDIA' | 'PERSONAL_ADMIN'
+  category  String  @default("PERSONAL") // 'PERSONAL' | 'LABORAL'
+  required  Boolean @default(false)      // informational only, never blocks saving
+  order     Int     @default(0)
+
+  @@unique([companyId, scope, key])
+}
+```
+
+Values are stored in `GuardiaFichaPersonal.camposPersonalizados` as a JSON object keyed by `PersonalFieldDefinition.key`. In `GuardiaFichaModal.tsx` these fields render **inside** the existing "Datos personales" / "Datos laborales" sections, filtered by `category` — there is no separate "Other data" block.
+
+## Drive Sync — Entity Assignments
+
+The **"Sincronizar Drive"** button calls:
+
+```
+POST /personal/drive/sync-entidades
+```
+
+`DriveService.syncEntidadesFolder(companyId, userId)` reads the Drive root configured in `FolderConfig type='CUMPLIMIENTO'` and expects this folder structure:
+
+```
+<root>/
+  Público/
+    <Provincia - Entidad>/
+      <Apellidos - Nombres>/      ← guard folder
+  Privado/
+    <Provincia - Entidad>/
+      <Apellidos - Nombres>/
+  Sin Asignar/
+    <Apellidos - Nombres>/        ← recently hired, no entity yet
+```
+
+The sync returns a detailed summary object with no partial failures hidden:
+
+```typescript
+{
+  entidadesCreadas: number,
+  entidadesRenombradas: number,
+  entidadesTipoDistinto: string[],   // type mismatch — not overwritten
+  entidadesColisionNombre: string[], // two Drive folders same name
+  guardiasActualizados: number,
+  documentos: number,
+  fichasPersonales: number,
+  asignacionesAbiertas: number,
+  asignacionesCerradas: number,
+  carpetasNoReconocidas: string[],
+  guardiasNoReconocidos: string[],
+  renombresIgnorados: string[],
+  guardiasFueraConCarpetaActiva: string[],
+  errors: string[]
+}
+```
+
+<Warning>
+If a guard already has a completed `SALIDA` movement (see below), the sync will **not** re-open their `AsignacionGuardia` even if their Drive folder is still present. Their name appears in `guardiasFueraConCarpetaActiva` instead. To re-activate them, first process a new hire from Recruitment.
+</Warning>
+
+## Entity Assignments (`AsignacionGuardia`)
+
+`AsignacionGuardia` is a **read-only history** generated entirely by Drive syncs. No form or endpoint creates or updates these records — the sync reconciles them automatically.
+
+```prisma
+model AsignacionGuardia {
+  cedula        String
+  nombreGuardia String
+  entidadId     Int
+  entidad       Entidad   @relation(...)
+  fechaInicio   DateTime
+  fechaFin      DateTime? // null = currently assigned
+  companyId     Int
+  createdBy     Int       // user who ran the sync
+
+  @@index([companyId, cedula])
+}
+```
+
+The sync opens a new `AsignacionGuardia` row whenever a guard folder appears under a different entity than their current active assignment. It closes (`fechaFin = now()`) the previous row. Entity identity is anchored by `Entidad.driveFolderId` (stable across renames), not by the folder name text — renaming a Drive folder updates the `Entidad.nombre` in place without creating a duplicate entity.
+
+Available read endpoints:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/personal/asignaciones` | List all assignments |
+| `GET` | `/personal/asignaciones/guardia/:cedula/historial` | History for one guard |
+| `DELETE` | `/personal/asignaciones/:id` | Safety valve — remove a bad sync row |
+
+## Guard Movements (`MovimientoPersonal`)
+
+Movements track when a guard enters or exits the company's operational systems. This is a **record, not a form for manual entry** — no `POST /personal/movimientos/entrada` endpoint exists. The design is explicit: Movimientos de Personal only reflects what has already happened through Recruitment or the exit action.
+
+```prisma
+enum TipoMovimientoPersonal { ENTRADA  SALIDA }
+enum EstadoMovimientoPersonal { EN_PROCESO  COMPLETADO }
+
+model MovimientoPersonal {
+  cedula        String
+  nombreGuardia String
+  tipo          TipoMovimientoPersonal
+  estado        EstadoMovimientoPersonal @default(EN_PROCESO)
+  origen        String  // 'RECLUTAMIENTO_CONTRATAR' | 'MANUAL_GUARDIAS_LIST'
+  companyId     Int
+  createdBy     Int
+  completadoAt  DateTime?
+  items         MovimientoPersonalItem[]
+
+  @@index([companyId, cedula])
+}
+
+model MovimientoPersonalItem {
+  movimientoId          Int
+  sistemaVerificacionId Int?     // nullable — set to null if system is deleted
+  nombreSistema         String   // snapshot at case creation; survives catalog changes
+  completado            Boolean  @default(false)
+  notas                 String?
+  completadoPor         Int?
+  completadoAt          DateTime?
+}
+```
+
+### Verification Systems (`SistemaVerificacion`)
+
+The checklist items inside each movement case are generated from the active `SistemaVerificacion` catalog at the time the case is created. GEMESEG's catalog (seeded for `companyId=1`) includes:
+
+- **IsyPlus** (no portal URL — internal process unknown)
+- **IESS**
+- **SUT**
+- **SICOSEP**
+
+This catalog is managed from the **"⚙ Configurar sistemas"** modal (`ConfiguracionSistemasModal.tsx`) within `/rrhh/historial`. It does **not** have its own page.
+
+```prisma
+model SistemaVerificacion {
+  nombre    String
+  urlPortal String?
+  activo    Boolean @default(true)
+  orden     Int     @default(0)
+  companyId Int
+
+  @@unique([companyId, nombre])
+}
+```
+
+### Entry Movement (ENTRADA)
+
+Created automatically by `DriveService.contratarCandidato()` when a candidate is hired from Recruitment. Origin is logged as `'RECLUTAMIENTO_CONTRATAR'`. Idempotent — if an open `ENTRADA` case already exists for the cédula, it is reused.
+
+### Exit Flow (SALIDA)
+
+<Steps>
+  <Step title="Initiate exit from Listado de Guardias">
+    The `LogOut` icon in the guard's row opens a `ConfirmDialog`. Confirming calls `POST /personal/movimientos/salida` with `{ cedula, nombreGuardia }`.
+  </Step>
+  <Step title="Case opens EN_PROCESO">
+    A `MovimientoPersonal` of type `SALIDA` is created with one `MovimientoPersonalItem` per active `SistemaVerificacion`. If no systems are configured, the case is created as `COMPLETADO` immediately (no items to check).
+  </Step>
+  <Step title="RRHH checks off each system">
+    From `/rrhh/historial`, clicking the case opens `MovimientoDetalleModal.tsx`. Each item can be toggled as `completado` with optional notes. When all items are checked, the case transitions to `COMPLETADO` automatically.
+  </Step>
+  <Step title="AsignacionGuardia is closed">
+    When the case reaches `COMPLETADO`, any active `AsignacionGuardia` for that cédula is closed with `fechaFin = now()` — without waiting for the next Drive sync.
+  </Step>
+  <Step title="Optional: archive the Drive folder">
+    With the case `COMPLETADO`, the "Archivar carpeta" button in `MovimientoDetalleModal.tsx` becomes available. It moves (does not delete) the guard's Drive folder to `FolderConfig type='GUARDIAS_ARCHIVO'`.
+
+    ```
+    POST /personal/drive/guardia/:cedula/archivar-carpeta
+    ```
+  </Step>
+</Steps>
+
+Movement endpoints:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/personal/movimientos` | List all cases (filterable by type, estado, search) |
+| `GET` | `/personal/movimientos/:id` | Get a single case with items |
+| `GET` | `/personal/movimientos/guardias-fuera` | Cédulas whose most recent movement is `SALIDA`/`COMPLETADO` |
+| `POST` | `/personal/movimientos/salida` | Open an exit case (idempotent) |
+| `PATCH` | `/personal/movimientos/:id/items/:itemId` | Toggle an item; auto-closes the case when all are complete |
+
+## "Guardias Fuera" — Hiding Exited Guards
+
+Guards whose most recent `MovimientoPersonal` is `SALIDA` / `COMPLETADO` are **hidden by default** from the table and from KPI counters. A discrete **"Mostrar guardias fuera (N)"** button reveals them — when shown, their rows are rendered at `opacity: 0.6` with a "Fuera" badge beside the name, and the exit icon is hidden (it no longer applies).
+
+The same `getCedulasFuera` set is used by `CumplimientoEntidadService.getComplianceOverview` to exclude exited guards from the Cumplimiento table.
+
+## History Timeline (`HistorialGuardia`)
+
+`/rrhh/historial` (`HistorialGuardia.tsx`) merges the `AsignacionGuardia` history and `MovimientoPersonal` cases into a single chronological timeline per guard. The old routes `/rrhh/asignaciones` and `/rrhh/movimientos` redirect here via `<Navigate>` in `App.tsx`.
+
+From this page, RRHH can also:
+
+- Delete a bad `AsignacionGuardia` row (safety valve after a mis-configured sync).
+- Open `MovimientoDetalleModal` to check off items or archive the guard's folder.
+- Access **"⚙ Configurar sistemas"** to manage the `SistemaVerificacion` catalog.

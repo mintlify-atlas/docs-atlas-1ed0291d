@@ -1,0 +1,191 @@
+---
+title: "Recruitment: Drive-Synced Candidate Management and Hiring"
+sidebarTitle: "Recruitment"
+description: "RRHH manages job positions and syncs candidates from Google Drive folders. Hiring a candidate moves their folder to Guardias and creates an entry movement."
+---
+
+The Recruitment sub-module lives at `/rrhh/reclutamiento` (`ReclutamientoPage.tsx`). Its fundamental rule is that **Google Drive is the source of truth for candidates** — no candidate records are stored in the database. The sync operation reads Drive folders, calculates document completeness, and returns a read-only list. The only write action available on a candidate is **"Marcar como Contratado"**, which physically moves the folder from Reclutamiento to Guardias and triggers a chain of downstream effects.
+
+<Note>
+The Kanban-of-candidates system (`/rrhh/kanban`, models `Candidate`/`KanbanColumn`/`CandidateHistory`) was permanently deleted on 2026-09-17 at the user's explicit request. It was never the real hiring mechanism. Do not re-introduce it. The only valid hiring flow is described on this page.
+</Note>
+
+## Job Positions (`JobPosition`)
+
+Each open vacancy is a `JobPosition` record. RRHH creates and edits vacancies from the top section of `ReclutamientoPage`. A vacancy has a **corresponding folder in Drive** (under the fixed `RECLUTAMIENTO` root) that contains the vacancy's JSON metadata file and the sub-folders of applicants who posted to it.
+
+```prisma
+model JobPosition {
+  id                 Int      @id @default(autoincrement())
+  puesto             String
+  descripcion        String?
+  // Array of { nombre: string, tipo?: string }
+  // tipo is one of: TEXTO | ALFANUMERICO | NUMERICO | CORREO | TELEFONO | FECHA
+  // Purely visual guide — not validated by the system.
+  camposRequeridos   Json     @default("[]")
+  // Array of { nombre: string, extensiones?: string[], obligatorio?: boolean }
+  // extensiones is a visual guide (e.g. CV → pdf/doc), not enforced.
+  // Only items where obligatorio !== false count toward completitudPercent.
+  archivosRequeridos Json     @default("[]")
+  estado             String   @default("ABIERTA") // ABIERTA | CERRADA
+  // GUARDIA | ADMINISTRATIVO — determines which Drive root the hired
+  // candidate's folder is moved to (CUMPLIMIENTO vs PERSONAL_ADMIN).
+  tipoContratacion   String   @default("GUARDIA")
+  driveFileId        String?  // ID of the vacancy JSON file in Drive
+  driveFolderId      String?  // ID of the vacancy's own folder in Drive
+  companyId          Int
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+```
+
+### CRUD Endpoints
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| `GET` | `/personal/reclutamiento/puestos` | JWT | List all positions for the company |
+| `POST` | `/personal/reclutamiento/puestos` | JWT | Create position — writes to DB and creates a JSON + folder in Drive |
+| `PATCH` | `/personal/reclutamiento/puestos/:id` | JWT | Update position — updates DB and overwrites the Drive JSON |
+| `DELETE` | `/personal/reclutamiento/puestos/:id` | JWT | Delete position — removes DB record and Drive JSON |
+
+<Warning>
+The **Delete button is intentionally absent from the UI** because deleting a position trashes its entire Drive folder, including all applicant sub-folders and their documents. The only UI action to "retire" a vacancy is setting its `estado` to `CERRADA`. The `DELETE` endpoint exists for external tooling only.
+</Warning>
+
+`POST` and `PATCH` accept:
+
+```typescript
+// CreateContractTemplateDto (contract.dto.ts)
+class CreateContractTemplateDto {
+  name: string;        // visible name
+  type: string;        // free-text document type
+  driveUrl?: string;   // link to the .docx source in Drive
+}
+
+// For JobPosition specifically (job-position.dto.ts)
+class CreateJobPositionDto {
+  puesto: string;
+  descripcion?: string;
+  camposRequeridos?: { nombre: string; tipo?: string; obligatorio?: boolean }[];
+  archivosRequeridos?: { nombre: string; extensiones?: string[]; obligatorio?: boolean }[];
+  estado?: string;
+  tipoContratacion?: string;
+}
+```
+
+## Google Drive as Source of Truth for Candidates
+
+Candidates are **never stored in the database**. Their data lives entirely inside a Drive folder named `Apellidos - Nombres` (e.g. `PEREZ GARCIA - JUAN CARLOS`) located under `RECLUTAMIENTO/<NombrePuesto>/`. The folder contains:
+
+- `candidato.json` — metadata written by the external applicant portal: `datosFormulario`, `puesto`, `puestoId`, `fechaPostulacion`, `archivos`, `modoSubida` (`'individual'` or `'archivo_unico'`).
+- Individual document files, one per required item (if `modoSubida = 'individual'`).
+- A single combined PDF (if `modoSubida = 'archivo_unico'`), which the AI analysis feature can split into separate files.
+- `analisis-ia.json` / `analisis-ia-pendiente.json` — written by MejoraGemeseg's AI analysis feature, **never** inside `candidato.json` (the external portal would overwrite any foreign keys on a re-application).
+
+<Note>
+The applicant portal lives in a completely separate repository (`RECLUTAMIENTO`). The two systems communicate **only through Google Drive** — there is no direct API between them. The portal writes `candidato.json`; MejoraGemeseg reads it. If a candidate re-applies, the portal rebuilds `candidato.json` from scratch with its six fixed keys, silently discarding anything MejoraGemeseg may have added.
+</Note>
+
+## Sync Flow
+
+Clicking **"Sincronizar"** in `ReclutamientoPage` calls:
+
+```
+POST /personal/reclutamiento/sync
+```
+
+This triggers `DriveService.syncReclutamientoCandidates()`, which:
+
+<Steps>
+  <Step title="Read the fixed RECLUTAMIENTO root">
+    Uses `HARDCODED_DRIVE_FOLDERS.RECLUTAMIENTO` (same folder ID as the applicant portal). No `FolderConfig` row is read or written for this type.
+  </Step>
+  <Step title="List vacancy sub-folders">
+    Each sub-folder is a vacancy. The JSON metadata file inside is matched to a `JobPosition` record by name.
+  </Step>
+  <Step title="List candidate sub-folders per vacancy">
+    Parses each folder name as `Apellidos - Nombres`; reads the cédula from `candidato.json` (or falls back to the old `Nombre - Cédula` format with a 10-digit number at the end).
+  </Step>
+  <Step title="Calculate completitudPercent">
+    Compares the files present against `JobPosition.archivosRequeridos`, counting only items where `obligatorio !== false`. Returns `(found / total) * 100`.
+  </Step>
+  <Step title="Return candidates (read-only)">
+    Returns `{ puestosCount, candidatosCount, candidatos[] }`. No database records are created or modified.
+  </Step>
+</Steps>
+
+The result is cached in `localStorage` (keyed by `companyId`) so the last-known list is visible immediately on next load, with a "Última sincronización: `<fecha>`" label.
+
+## Hiring a Candidate
+
+The **"Marcar como Contratado"** button in the candidate detail modal is the single path to hiring. It requires `canWrite('RRHH')` and triggers a `ConfirmDialog` before proceeding.
+
+```
+POST /personal/reclutamiento/candidatos/:folderId/contratar
+```
+
+`DriveService.contratarCandidato(companyId, folderId)` executes the following:
+
+<Steps>
+  <Step title="Parse identity">
+    Reads the candidate's cédula from `candidato.json` or from the folder name (old `Nombre - Cédula` format). If neither yields a cédula, the operation is rejected with a clear error — a folder with ambiguous identity is never moved.
+  </Step>
+  <Step title="Duplicate check">
+    Queries `EmployeeDriveFolder` for the same `(companyId, cedula)`. If a record exists **and** `MovimientoPersonalService.isActivo(companyId, cedula)` returns `true` (guard is currently active), the operation is rejected. If the guard is no longer active (their most recent `MovimientoPersonal` is `SALIDA` / `COMPLETADO`), re-hiring is allowed — this is a legitimate re-employment scenario.
+  </Step>
+  <Step title="Mark as hired in Drive">
+    Updates `candidato.json` in the candidate's folder with `estado: 'CONTRATADO'` and `fechaContratacion`.
+  </Step>
+  <Step title="Move folder to Guardias (or Administrativo)">
+    - If `tipoContratacion = 'GUARDIA'`: resolves (or creates) a **"Sin Asignar"** sub-folder at the top level of `FolderConfig type='CUMPLIMIENTO'` alongside `Público` and `Privado`, then moves the candidate folder there via `addParents`/`removeParents`. No documents are copied or deleted.
+    - If `tipoContratacion = 'ADMINISTRATIVO'`: moves **and renames** the folder to `Nombre Apellido - Puesto` format in `FolderConfig type='PERSONAL_ADMIN'`. The rename and move happen in a single `files.update` call so the folder never exists under the admin root with the wrong name, even briefly.
+  </Step>
+  <Step title="Create ENTRADA movement">
+    Calls `movimientoPersonalService.crearEntrada({ cedula, nombreGuardia, companyId, userId, origen: 'RECLUTAMIENTO_CONTRATAR' })`. Idempotent — if an open `ENTRADA` case already exists for that cédula, it reuses it rather than creating a duplicate. This call is wrapped in `try/catch`; a failure here never aborts the hire.
+  </Step>
+  <Step title="Sync the destination">
+    Immediately runs `syncEntidadesFolder` (for guards) or `syncPersonalAdminFolder` (for admin staff) so the new hire appears in Listado de Guardias or Personal Administrativo without a separate manual sync.
+  </Step>
+</Steps>
+
+<Tip>
+When hiring a guard, the new folder lands in **"Sin Asignar"**. It appears in `/rrhh/guardias` but has no entity assignment. The assignment is set later when RRHH (or a Drive admin) moves the folder into a `Público/<Entidad>/` or `Privado/<Entidad>/` sub-folder and presses "Sincronizar Drive".
+</Tip>
+
+## AI File Analysis
+
+When a candidate submits documentation as a single combined PDF (`modoSubida = 'archivo_unico'`), MejoraGemeseg can use Vertex AI (Gemini 2.5 Flash) to propose how to split the PDF into individual documents.
+
+```
+POST /personal/reclutamiento/candidatos/:folderId/analizar
+```
+
+The analysis is **always a proposal** — it never writes anything. The RRHH user reviews miniature thumbnails (one per page, rendered by `pdfjs-dist`) and confirms or corrects the page-to-document mapping before running:
+
+```
+POST /personal/reclutamiento/candidatos/:folderId/aplicar-analisis
+```
+
+which physically splits the PDF and writes named files (e.g. `Cédula - original.pdf`) into the Drive folder.
+
+Additional endpoints in the AI analysis flow:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/personal/reclutamiento/candidatos/:folderId/analisis-pendiente` | Returns the last saved proposal without calling the AI |
+| `GET` | `/personal/reclutamiento/candidatos/:folderId/pdf/:driveFileId` | Proxy that serves the PDF to the browser (validates the file belongs to the folder first) |
+
+<Warning>
+The AI provider is Vertex AI using the service account already used for Drive (`drive-sync@agentes-504115.iam.gserviceaccount.com`). The model `gemini-2.5-flash` (configurable via `GOOGLE_VERTEX_MODEL`) is scheduled for retirement by Google on **16 October 2026**. The environment variable must be updated to a Gemini 3.x model when access is granted to this GCP project.
+</Warning>
+
+## Access Rules Summary
+
+| Action | Required permission |
+|--------|-------------------|
+| View candidates and positions | Any authenticated user (JWT) |
+| Create / edit / close a position | Any authenticated user (JWT) |
+| Hire a candidate | `canWrite('RRHH')` |
+| Trigger AI analysis | `canWrite('RRHH')` |
+| Apply AI split (write to Drive) | `canWrite('RRHH')` |
+| Delete a position (API only) | JWT (no UI button) |

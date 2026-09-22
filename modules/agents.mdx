@@ -1,0 +1,237 @@
+---
+title: "Custom AI Agents: System Prompts, Scopes, and User Assignments"
+sidebarTitle: "Agents"
+description: "ADMIN users create AI agents with custom system prompts and scopes (GLOBAL, PROJECTS, TASKS, ADMIN), then assign them to specific users."
+---
+
+MejoraGemeseg lets ADMIN users build custom AI agents that replace the default system prompt sent to `gpt-4o-mini`. Each agent carries a `name`, a set of `instructions` (the system prompt, up to 2 000 characters), and a `scope` that signals its intended use within the platform (`GLOBAL`, `PROJECTS`, `TASKS`, or `ADMIN`). Agents are then assigned to individual users so that those users see the agent in the chat drawer's agent selector. A special **global agent** (`createdBy: null`) is automatically available to every user without an explicit assignment.
+
+## Agent Model
+
+```prisma
+model Agent {
+  id            Int            @id @default(autoincrement())
+  name          String
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  createdBy     Int?           // null = global agent
+  instructions  String         // system prompt sent to gpt-4o-mini
+  scope         String         @default("GLOBAL")
+  conversations Conversation[]
+  activeUsers   User[]         @relation("UserActiveAgent")
+  userLinks     UserAgent[]
+
+  @@unique([createdBy, name])
+}
+
+model UserAgent {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  agentId   Int
+  createdAt DateTime @default(now())
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, agentId])
+}
+```
+
+### Scope values
+
+| Scope | Intended use |
+|---|---|
+| `GLOBAL` | General-purpose assistant; available across all platform sections. |
+| `PROJECTS` | Agent tuned for project management queries. |
+| `TASKS` | Agent specialised in task tracking and status updates. |
+| `ADMIN` | Agent intended for administrative or operational workflows. |
+
+Scope is a metadata field that the frontend can use to filter the agent selector. The backend does not enforce scope restrictions at the route level; enforcement is at the UI layer.
+
+## Global Agent
+
+The platform seeds a built-in global agent named **"Agente GEMESEG"** with `createdBy: null`. Because it has no owner, it matches the `OR [{ createdBy: null }]` clause in `getAvailableForUser` and is returned for every authenticated user regardless of their assignments. It also acts as the fallback when a `POST /chat/message` request omits `agentId`.
+
+<Note>
+  Deleting all custom agents does not remove the chat feature. The global agent remains active and all unanswered `agentId` fields resolve to it automatically.
+</Note>
+
+## Scoped (User-Assigned) Agents
+
+Any agent created with a non-null `createdBy` is a **scoped agent** and must be explicitly assigned to users before they can select it in the chat drawer. A single user can hold assignments to any number of agents. The `@@unique([userId, agentId])` constraint on `UserAgent` prevents duplicate assignments and the service layer throws `409 Conflict` if an attempt is made.
+
+### Auto-assignment on creation
+
+When an ADMIN creates a new agent via `POST /admin/agents`, the `create` service method immediately writes a `UserAgent` row linking the creator (`dto.userId`) to the new agent. The creator can therefore test the agent in the chat drawer right away without a separate assign call.
+
+## Access Control
+
+All `/admin/agents` routes require:
+
+- A valid JWT (`AuthGuard('jwt')`).
+- The `ADMIN` role (`RolesGuard` + `@Roles(UserRole.ADMIN)`).
+- The `SISTEMAS` section permission (`SectionPermissionGuard` + `@Section('SISTEMAS', 'view'|'write')`).
+
+The **Agents tab** in the frontend is only rendered for users with the `ADMIN` role or the `sistemas` permission group. Regular users interact with agents exclusively through the `GET /agents/available` endpoint and the chat drawer.
+
+## Workflow: Create → Assign → Chat
+
+<Steps>
+  <Step title="Create the agent">
+    An ADMIN opens the **Sistemas → Agentes** tab and fills in the agent form: name (max 100 chars), system prompt / instructions (max 2 000 chars), and scope.
+
+    ```http
+    POST /admin/agents
+    Authorization: Bearer <admin-token>
+    Content-Type: application/json
+
+    {
+      "userId": 2,
+      "name": "Asistente Proyectos",
+      "systemMsg": "Eres un asistente especializado en gestión de proyectos para GEMESEG. Responde siempre en español, de forma concisa. Cuando el usuario pregunte por proyectos o tareas, usa los datos disponibles del sistema.",
+      "scope": "PROJECTS"
+    }
+    ```
+
+    The service checks for a duplicate `(createdBy, name)` pair. If unique, the agent is created and a `UserAgent` row is automatically inserted for `userId: 2`.
+  </Step>
+
+  <Step title="Assign the agent to additional users">
+    To give other users access to the new agent, the ADMIN calls the assign endpoint once per user:
+
+    ```http
+    POST /admin/agents/5/assign/8
+    Authorization: Bearer <admin-token>
+    ```
+
+    This creates a `UserAgent` row for `userId: 8, agentId: 5`. The endpoint returns `409 Conflict` if the user already has access.
+
+    To review all current assignments at any time:
+
+    ```http
+    GET /admin/agents/assignments
+    Authorization: Bearer <admin-token>
+    ```
+
+    Response shape:
+
+    ```json
+    [
+      {
+        "id": 12,
+        "userId": 8,
+        "agentId": 5,
+        "createdAt": "2025-06-05T10:00:00.000Z",
+        "agent": {
+          "id": 5,
+          "name": "Asistente Proyectos",
+          "scope": "PROJECTS",
+          "isActive": true
+        },
+        "user": {
+          "id": 8,
+          "fullName": "María López",
+          "email": "mlopez@gemeseg.com"
+        }
+      }
+    ]
+    ```
+  </Step>
+
+  <Step title="User sees the agent in the chat dropdown">
+    When `userId: 8` opens the chat drawer, the frontend calls:
+
+    ```http
+    GET /agents/available
+    Authorization: Bearer <user-token>
+    ```
+
+    The service returns the global agent plus all agents assigned to the user:
+
+    ```json
+    {
+      "agents": [
+        {
+          "id": 1,
+          "name": "Agente GEMESEG",
+          "instructions": "...",
+          "scope": "GLOBAL",
+          "isActive": true,
+          "createdBy": null
+        },
+        {
+          "id": 5,
+          "name": "Asistente Proyectos",
+          "instructions": "Eres un asistente especializado en gestión de proyectos...",
+          "scope": "PROJECTS",
+          "isActive": true,
+          "createdBy": 2
+        }
+      ],
+      "defaultAgent": {
+        "id": 1,
+        "name": "Agente GEMESEG",
+        "instructions": "...",
+        "scope": "GLOBAL",
+        "isActive": true,
+        "createdBy": null
+      }
+    }
+    ```
+
+    The user selects "Asistente Proyectos" from the dropdown and the chat drawer sends subsequent messages with `agentId: 5`, causing the backend to use that agent's `instructions` as the system prompt for every `gpt-4o-mini` call.
+  </Step>
+</Steps>
+
+## Admin Endpoints Reference
+
+All endpoints below require `ADMIN` role and `SISTEMAS` section permission.
+
+| Method | Path | Permission | Description |
+|---|---|---|---|
+| `GET` | `/admin/agents` | `view` | Lists all active users with their assigned agents. |
+| `GET` | `/admin/agents/catalog` | `view` | Lists every agent in the system with user-link counts. |
+| `GET` | `/admin/agents/assignments` | `view` | Lists all `UserAgent` rows with expanded agent and user data. |
+| `GET` | `/admin/agents/user/:userId` | `view` | Lists agents assigned to a specific user. |
+| `POST` | `/admin/agents` | `write` | Creates a new agent and auto-assigns it to the creator. |
+| `PATCH` | `/admin/agents/:id` | `write` | Updates `name`, `systemMsg`, `scope`, or `isActive`. |
+| `DELETE` | `/admin/agents/:id` | `write` | Permanently deletes an agent. |
+| `POST` | `/admin/agents/:id/assign/:userId` | `write` | Grants a user access to an agent. |
+| `DELETE` | `/admin/agents/:id/assign/:userId` | `write` | Revokes a user's access to an agent. |
+
+### `POST /admin/agents` — `CreateAgentDto`
+
+```typescript
+export class CreateAgentDto {
+  userId: number;         // ID of the creating user (also auto-assigned)
+  name: string;           // max 100 chars
+  systemMsg: string;      // system prompt, max 2 000 chars
+  scope?: string;         // defaults to "GLOBAL"
+}
+```
+
+### `PATCH /admin/agents/:id` — `UpdateAgentDto`
+
+```typescript
+export class UpdateAgentDto {
+  name?: string;          // max 100 chars
+  systemMsg?: string;     // max 2 000 chars
+  scope?: string;
+  isActive?: boolean;     // set false to disable without deleting
+}
+```
+
+<Tip>
+  Use `isActive: false` to temporarily disable an agent without removing its assignments. The chat service falls back to the default `SYSTEM_PROMPT` for any agent that is inactive, so users with that agent assigned continue to get responses — they just use the baseline prompt until the agent is re-enabled.
+</Tip>
+
+## User Endpoint Reference
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/agents/available` | JWT | Returns global agents plus all agents assigned to the requesting user. |
+
+The response object contains two keys:
+
+- `agents` — the full deduplicated list (global + assigned).
+- `defaultAgent` — the global `"Agente GEMESEG"` agent record, used by the frontend to pre-select a sensible default in the chat dropdown.

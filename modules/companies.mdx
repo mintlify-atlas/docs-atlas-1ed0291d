@@ -1,0 +1,236 @@
+---
+title: "Company Management and White-Label Branding"
+sidebarTitle: "Companies"
+description: "Each company in MejoraGemeseg has independent branding, email domain, section access, and user scope. A Super Admin manages all companies."
+---
+
+MejoraGemeseg is a multi-tenant platform where each tenant is a `Company` record. All operational data — users, documents, custodias, contracts, certifications, sales records, and more — is scoped by `companyId`. Each company can configure its own logo, color palette, and email domain, giving the platform a white-labeled appearance per tenant. A single Super Admin account (`companyId: null`) operates above all tenants and is the only actor that can create or delete companies.
+
+## Company model
+
+```prisma
+model Company {
+  id             Int      @id @default(autoincrement())
+  name           String
+  slug           String   @unique
+  logoUrl        String?
+  primaryColor   String   @default("#100F31")
+  secondaryColor String   @default("#12375F")
+  accentColor    String   @default("#EE3B1B")
+  bgColor        String   @default("#f8fafc")
+  textColor      String   @default("#1e293b")
+  domain         String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  // ... relations to users, sections, and all operational modules
+}
+```
+
+### Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `Int` | Auto-incrementing primary key |
+| `name` | `String` | Human-readable company name (e.g. `"GEMESEG S.A."`) |
+| `slug` | `String` | URL-safe unique identifier (e.g. `"gemeseg"`). Used for public theme resolution |
+| `logoUrl` | `String?` | Relative path to the uploaded logo (e.g. `/uploads/logos/gemeseg.png`) |
+| `primaryColor` | `String` | Hex color. Default `#100F31` |
+| `secondaryColor` | `String` | Hex color. Default `#12375F` |
+| `accentColor` | `String` | Hex color. Default `#EE3B1B` |
+| `bgColor` | `String` | Background hex color. Default `#f8fafc` |
+| `textColor` | `String` | Text hex color. Default `#1e293b` |
+| `domain` | `String?` | Email domain used for registration validation (e.g. `gemeseg.com`) and login theme detection |
+
+---
+
+## Endpoints
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/companies` | ADMIN + Section `COMPANIES view` | List all companies (Super Admin) or own company (Company Admin) |
+| `GET` | `/companies/mine` | JWT + Section `COMPANY_SETTINGS view` | Return the authenticated user's company |
+| `GET` | `/companies/slug/:slug` | Public | Resolve a company by slug (used for login theme loading) |
+| `GET` | `/companies/domain/:domain` | Public | Resolve a company by email domain |
+| `GET` | `/companies/:id` | ADMIN + Section `COMPANY_SETTINGS view` | Return a single company by ID |
+| `POST` | `/companies` | Super Admin + Section `COMPANIES write` | Create a new company with its first admin user |
+| `PATCH` | `/companies/:id` | ADMIN + Section `COMPANY_SETTINGS write` | Update company settings and branding |
+| `DELETE` | `/companies/:id` | Super Admin + Section `COMPANIES write` | Permanently delete a company |
+| `POST` | `/companies/:id/logo` | ADMIN + Section `COMPANY_SETTINGS write` | Upload a logo image |
+
+---
+
+## Creating a company
+
+`POST /companies` is restricted to the Super Admin (the caller must have `companyId: null` in their JWT). The body is validated against `CreateCompanyDto`, which simultaneously provisions the company and its first admin user:
+
+<ParamField body="name" type="string" required>
+  Full company name.
+</ParamField>
+
+<ParamField body="slug" type="string" required>
+  URL-safe slug. Must be globally unique across all companies.
+</ParamField>
+
+<ParamField body="adminFullName" type="string" required>
+  Full name for the company's first admin user.
+</ParamField>
+
+<ParamField body="adminEmail" type="string" required>
+  Email address for the company's first admin user.
+</ParamField>
+
+<ParamField body="adminPassword" type="string" required>
+  Password for the first admin user (minimum 6 characters).
+</ParamField>
+
+<ParamField body="domain" type="string">
+  Optional email domain (e.g. `gemeseg.com`). Used to restrict registration and detect company theme at login.
+</ParamField>
+
+<ParamField body="primaryColor" type="string">
+  Optional hex color (e.g. `#100F31`). Must match `/^#[0-9A-Fa-f]{6}$/`.
+</ParamField>
+
+<ParamField body="secondaryColor" type="string">
+  Optional hex color. Must match `/^#[0-9A-Fa-f]{6}$/`.
+</ParamField>
+
+<ParamField body="accentColor" type="string">
+  Optional hex color. Must match `/^#[0-9A-Fa-f]{6}$/`.
+</ParamField>
+
+<ParamField body="bgColor" type="string">
+  Optional background hex color. Must match `/^#[0-9A-Fa-f]{6}$/`.
+</ParamField>
+
+<ParamField body="textColor" type="string">
+  Optional text hex color. Must match `/^#[0-9A-Fa-f]{6}$/`.
+</ParamField>
+
+<ParamField body="logoUrl" type="string">
+  Optional initial logo path. Normally set after creation via `POST /companies/:id/logo`.
+</ParamField>
+
+```json
+// POST /companies — example body
+{
+  "name": "GEMESEG S.A.",
+  "slug": "gemeseg",
+  "adminFullName": "Carlos Administrador",
+  "adminEmail": "admin@gemeseg.com",
+  "adminPassword": "AdminS3guro!",
+  "domain": "gemeseg.com",
+  "primaryColor": "#100F31",
+  "secondaryColor": "#12375F",
+  "accentColor": "#EE3B1B"
+}
+```
+
+<Warning>
+  If the caller's JWT contains a non-null `companyId`, the endpoint throws `403 Forbidden: "Solo el super administrador puede crear empresas"`. Company Admins cannot create additional companies.
+</Warning>
+
+---
+
+## Updating a company
+
+`PATCH /companies/:id` accepts any subset of `UpdateCompanyDto` fields. Company Admins can only update their own company (`req.user.companyId === id`); attempts to update another company return `403 Forbidden`.
+
+All color fields are validated with the same regex `/^#[0-9A-Fa-f]{6}$/`. Providing an invalid hex value will result in a `400 Bad Request` with the message `"primaryColor debe ser un color hex válido"` (or the equivalent for each field).
+
+---
+
+## Logo upload
+
+`POST /companies/:id/logo` accepts a multipart file upload under the field name `logo`.
+
+<Steps>
+  <Step title="File is received in memory">
+    Multer uses `memoryStorage()` so the file never touches the filesystem before validation.
+  </Step>
+  <Step title="MIME type is validated">
+    Only `image/jpg`, `image/jpeg`, `image/png`, `image/gif`, and `image/svg+xml` are accepted. Other types are rejected immediately.
+  </Step>
+  <Step title="Size limit is enforced">
+    Maximum file size is **2 MB** (`2 * 1024 * 1024` bytes).
+  </Step>
+  <Step title="File is written to disk">
+    The service writes the file to `uploads/logos/` and updates `company.logoUrl` with the relative path.
+  </Step>
+  <Step title="Frontend resolves the URL">
+    The frontend's `resolveLogoUrl()` helper prepends `VITE_API_URL` to any `logoUrl` that starts with `/uploads/`, turning the stored relative path into an absolute URL.
+  </Step>
+</Steps>
+
+The `uploads/logos/` directory is served by the NestJS application via `express.static`, so logo files are accessible at `<API_URL>/uploads/logos/<filename>` without authentication.
+
+---
+
+## Multi-tenancy and data isolation
+
+All data models in MejoraGemeseg include a `companyId` foreign key with `onDelete: Cascade`. The `companyId` is **never** read from the request body — it is always sourced from the authenticated user's JWT payload:
+
+```typescript
+// Pattern used in every scoped service method
+async findAll(companyId?: number | null) {
+  const where: any = {};
+  if (companyId) {
+    where.companyId = companyId;
+  }
+  // companyId === null → Super Admin → no filter applied → sees all records
+  return this.prisma.someModel.findMany({ where });
+}
+```
+
+<Note>
+  When `companyId` is `null` (Super Admin), no company filter is applied and the query returns records across all tenants. Every service method that accepts `companyId` handles this case explicitly.
+</Note>
+
+---
+
+## Access control tiers
+
+<CardGroup cols={2}>
+  <Card title="Super Admin" icon="crown">
+    Identified by `companyId: null` in the JWT. Email: `admin@general.com`. Can list, create, update, and delete **any** company. Not scoped to any single tenant's data.
+  </Card>
+  <Card title="Company Admin" icon="building">
+    A user with `role: ADMIN` and a non-null `companyId`. Can manage their own company's settings, users, and sections. Cannot see or modify other companies.
+  </Card>
+  <Card title="SectionPermissionGuard" icon="shield">
+    Beyond role checks, the `SectionPermissionGuard` verifies that the company has the required `CompanySection` record and that the user has the required `UserPermission` (`canView` or `canWrite`) before granting access to a section endpoint.
+  </Card>
+  <Card title="GET /companies/mine" icon="user">
+    Any authenticated user (any role) can call `GET /companies/mine` to retrieve their own company's branding data — used by the frontend to apply the correct theme on load.
+  </Card>
+</CardGroup>
+
+---
+
+## Login domain detection and white-labeling
+
+When a user submits their email on the login page, the frontend extracts the domain part (e.g. `gemeseg.com` from `juan@gemeseg.com`) and calls `GET /companies/domain/:domain` to resolve the company's theme before the user is fully authenticated. This allows the login screen itself to be branded per tenant.
+
+The same theme data — `primaryColor`, `secondaryColor`, `accentColor`, `bgColor`, `textColor`, and `logoUrl` — is applied throughout the entire application session once the user is logged in.
+
+`GET /companies/slug/:slug` serves the same purpose and is publicly accessible, enabling direct deep-link access to a tenant-specific URL (e.g. `app.mejora.com/gemeseg`).
+
+---
+
+## CompanySection: toggling platform sections
+
+`CompanySection` records define which functional sections of the platform a company has access to. A section that is not present in `CompanySection` for a given company is completely hidden from that company's users, regardless of their individual permissions.
+
+```prisma
+model CompanySection {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  company   Company  @relation(...)
+  section   String
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, section])
+}
+```
+
+Section keys map directly to the `@Section()` decorator used on controller routes (e.g. `COMPANIES`, `COMPANY_SETTINGS`, `CUSTODIAS`, `VENTAS`, etc.). The Super Admin manages `CompanySection` entries to enable or disable modules per tenant without code changes.

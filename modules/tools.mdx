@@ -1,0 +1,258 @@
+---
+title: "Software Tool Inventory and User Assignments"
+sidebarTitle: "Tools"
+description: "Manage a catalog of software tools, assign them to multiple users, and track assignment history with full audit logs."
+---
+
+The Tools module gives the systems administrator a centralized registry of every software tool used across the organization. Admins can maintain a catalog of tools (with optional category tagging), assign specific tools to individual users together with version and license details, and retrieve a complete audit trail for every change ever made to an assignment. The entire section is gated behind the `sistemas@gemeseg.com` user account — no other user sees the Tools navigation item, regardless of their platform role.
+
+<CardGroup cols={2}>
+  <Card title="Tool Catalog" icon="layer-group">
+    Define every software tool by name and optional category. Names are unique company-wide. Only `ADMIN` users can create or delete catalog entries.
+  </Card>
+  <Card title="User Assignments" icon="user-check">
+    Assign any tool to any user with an optional `version` string and `licenseKey`. One assignment per `(tool, user)` pair is enforced at the database level.
+  </Card>
+  <Card title="Full Audit Trail" icon="clock-rotate-left">
+    Every create, update, and delete action on an assignment is recorded in `ToolAuditLog` — capturing who performed it, what changed, and when.
+  </Card>
+  <Card title="Access Control" icon="lock">
+    The Tools section is accessible **only** to the `sistemas@gemeseg.com` user. All endpoints are protected by `RolesGuard`; non-Admin requests are rejected at the route level.
+  </Card>
+</CardGroup>
+
+---
+
+## Tool catalog model
+
+The `Tool` table holds the master list of software tools available in the organization.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `integer` | Auto-incremented primary key. |
+| `name` | `string` | Unique across the company. Required. |
+| `category` | `string` | Optional free-form category (e.g., `"Diseño"`, `"Seguridad"`, `"Productividad"`). |
+| `createdAt` | `DateTime` | Set automatically on creation. |
+| `updatedAt` | `DateTime` | Updated automatically on every change. |
+
+---
+
+## Tool assignment model
+
+The `ToolAssignment` table tracks which user has been assigned which tool, along with deployment-specific metadata.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `integer` | Auto-incremented primary key. |
+| `toolId` | `integer` | FK → `Tool.id`. Cascades on delete. |
+| `userId` | `integer` | FK → `User.id`. |
+| `version` | `string` | Optional. The specific version of the tool assigned (e.g., `"2024.3.1"`). |
+| `licenseKey` | `string` | Optional. The license key or seat identifier for this user. |
+| `assignedAt` | `DateTime` | Timestamp of the original assignment. Set once on creation. |
+| `createdAt` | `DateTime` | Row creation timestamp. |
+| `updatedAt` | `DateTime` | Updated on every PATCH. |
+
+<Note>
+  The combination `(toolId, userId)` is unique — a user can only hold one assignment per tool at a time. Attempting to assign the same tool twice to the same user will return a conflict error.
+</Note>
+
+---
+
+## Audit log model
+
+Every mutation to a `ToolAssignment` record writes an append-only `ToolAuditLog` row.
+
+| Field | Type | Notes |
+|---|---|---|
+| `id` | `integer` | Auto-incremented primary key. |
+| `assignmentId` | `integer` | FK → `ToolAssignment.id`. Cascades on delete. |
+| `action` | `string` | Free-form action label (e.g., `"ASSIGNED"`, `"VERSION_UPDATED"`, `"REMOVED"`). |
+| `performedBy` | `integer` | FK → `User.id` — the Admin who triggered the change. |
+| `details` | `string` | Optional human-readable description of what changed. |
+| `createdAt` | `DateTime` | Exact timestamp of the audit event. |
+
+---
+
+## Managing the tool catalog
+
+### Create a tool (Admin only)
+
+```json title="POST /tools — request body"
+{
+  "name": "Adobe Illustrator",
+  "category": "Diseño"
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|:---:|---|
+| `name` | `string` | ✅ | Must be unique. |
+| `category` | `string` | ❌ | Optional grouping label. |
+
+### List all tools
+
+```http
+GET /tools
+```
+
+Returns the full catalog with each tool's `id`, `name`, `category`, and timestamps. Available to any user with access to the Tools section.
+
+### Delete a tool (Admin only)
+
+```http
+DELETE /tools/:id
+```
+
+Deletes the catalog entry and cascades to all related `ToolAssignment` and `ToolAuditLog` records.
+
+<Note>
+  Deleting a tool from the catalog also removes all of its user assignments. This action is irreversible — confirm before sending the request.
+</Note>
+
+---
+
+## Assigning tools to users
+
+<Steps>
+  <Step title="Identify the tool and user">
+    You will need the numeric `id` of the tool (from `GET /tools`) and the numeric `id` of the target user (from `GET /tools/users`).
+  </Step>
+  <Step title="POST to the assign endpoint">
+    Send a `POST /tools/assign` request with the tool ID, user ID, and any optional version or license details.
+
+    ```json title="POST /tools/assign — request body"
+    {
+      "toolId": 3,
+      "userId": 17,
+      "version": "2024.3.1",
+      "licenseKey": "XXXX-YYYY-ZZZZ-AAAA"
+    }
+    ```
+
+    | Field | Type | Required | Notes |
+    |---|---|:---:|---|
+    | `toolId` | `number` | ✅ | ID of the tool to assign. |
+    | `userId` | `number` | ✅ | ID of the user to receive the assignment. |
+    | `version` | `string` | ❌ | Specific software version for this seat. |
+    | `licenseKey` | `string` | ❌ | License key or seat identifier. |
+  </Step>
+  <Step title="Audit log is written automatically">
+    The system writes a `ToolAuditLog` record recording the `ASSIGNED` action, the Admin who performed it, and the timestamp.
+  </Step>
+</Steps>
+
+### Assigning the same tool to multiple users
+
+To assign one tool to several users, call `POST /tools/assign` once per user. The endpoint supports multiple concurrent assignment requests — submit them in parallel or in sequence.
+
+```json title="Assign tool ID 3 to user 18"
+{
+  "toolId": 3,
+  "userId": 18,
+  "version": "2024.3.1",
+  "licenseKey": "BBBB-CCCC-DDDD-EEEE"
+}
+```
+
+---
+
+## Updating an assignment
+
+Use `PATCH /tools/assign/:id` to update the `version` or `licenseKey` of an existing assignment. Only the fields supplied in the request body are changed.
+
+```json title="PATCH /tools/assign/:id — update version after a software upgrade"
+{
+  "version": "2025.1.0"
+}
+```
+
+```json title="PATCH /tools/assign/:id — update license key only"
+{
+  "licenseKey": "NEW-LICENSE-KEY-9999"
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `version` | `string` | New version string. |
+| `licenseKey` | `string` | Replacement license key or seat identifier. |
+
+Each successful update appends a new audit log entry.
+
+---
+
+## Retrieving audit history
+
+Every change to an assignment is permanently logged. Retrieve the full ordered history for a single assignment:
+
+```http
+GET /tools/assign/:id/audit
+```
+
+A typical audit trail response lists events oldest-first, showing the action taken, who performed it, and when:
+
+```json title="GET /tools/assign/7/audit — example response"
+[
+  {
+    "id": 1,
+    "assignmentId": 7,
+    "action": "ASSIGNED",
+    "performedBy": 2,
+    "details": "Initial assignment",
+    "createdAt": "2025-01-15T09:00:00.000Z"
+  },
+  {
+    "id": 12,
+    "assignmentId": 7,
+    "action": "VERSION_UPDATED",
+    "performedBy": 2,
+    "details": "Upgraded from 2024.3.1 to 2025.1.0",
+    "createdAt": "2025-03-02T14:22:10.000Z"
+  }
+]
+```
+
+<Tip>
+  Use the audit endpoint during compliance reviews or software license audits to produce a timestamped record of every seat assignment and change, including which administrator performed each action.
+</Tip>
+
+---
+
+## User profile — assigned tools
+
+Each user can view the tools currently assigned to them via their own profile endpoint:
+
+```http
+GET /users/me
+```
+
+The response includes a `toolAssignments` array listing every active tool assignment for the authenticated user, along with the tool name, version, and license key.
+
+---
+
+## Access restriction
+
+The Tools section is **only visible to `sistemas@gemeseg.com`**. This restriction is enforced at the frontend navigation layer and backed by `RolesGuard` on every endpoint. Requests from any other user — regardless of their `UserRole` — are rejected with a `403 Forbidden` response.
+
+```
+GET /tools         → 403 Forbidden (non-sistemas user)
+POST /tools        → 403 Forbidden (non-Admin)
+POST /tools/assign → 403 Forbidden (non-Admin)
+```
+
+---
+
+## Endpoint reference
+
+| Method | Path | Who can call | Description |
+|---|---|---|---|
+| `GET` | `/tools` | `sistemas@gemeseg.com` | List the full tool catalog. |
+| `POST` | `/tools` | `ADMIN` only | Add a new tool to the catalog. |
+| `DELETE` | `/tools/:id` | `ADMIN` only | Delete a tool and all its assignments. |
+| `GET` | `/tools/assignments` | `ADMIN` only | List all active tool assignments across all users. |
+| `GET` | `/tools/users` | `ADMIN` only | List users together with their assigned tools. |
+| `POST` | `/tools/assign` | `ADMIN` only | Assign a tool to a user (with optional version and license key). |
+| `PATCH` | `/tools/assign/:id` | `ADMIN` only | Update the version or license key of an existing assignment. |
+| `DELETE` | `/tools/assign/:id` | `ADMIN` only | Remove a tool assignment from a user. |
+| `GET` | `/tools/assign/:id/audit` | `ADMIN` only | Retrieve the full audit log for a specific assignment. |
+| `GET` | `/users/me` | Authenticated user | View own profile including assigned tools. |

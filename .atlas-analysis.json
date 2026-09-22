@@ -1,23 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "MejoraGemeseg",
+  "projectType": "saas",
+  "projectName": "MejoraGemeseg",
+  "projectDescription": "MejoraGemeseg is a multi-tenant internal operations platform for GEMESEG and affiliated companies, covering project management, HR, custodias, cacao inventory, sales, and AI-powered assistance.",
   "theme": "maple",
-  "colors": {
-    "primary": "#100F31",
-    "light": "#12375F",
-    "dark": "#EE3B1B"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/ljbarzola/MejoraGemeseg"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/ljbarzola/MejoraGemeseg"
-    }
-  },
+  "primaryColor": "#100F31",
+  "lightColor": "#12375F",
+  "darkColor": "#EE3B1B",
   "navigation": {
     "tabs": [
       {
@@ -122,5 +110,52 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Multi-tenant white-labeling with per-company branding (colors, logo, email domain)",
+    "Project management with Kanban board and role-based membership (OWNER, MEMBER, VIEWER)",
+    "Full HR module: recruitment via Google Drive sync, guard compliance tracking, document generation",
+    "Custodias management with PDF generation and payroll matrix (HACIENDA, PUERTO, VIP)",
+    "Cacao inventory system: receptions, lots, settlements, shipments, payables/receivables",
+    "Sales module: leads, client visits, contract templates with docx merge, webhooks",
+    "AI chat assistant powered by GitHub Models (gpt-4o-mini) with custom agents and scopes",
+    "Section-level permission system (CompanySection + UserPermission) per company",
+    "Admin dashboard with user stats, project health indicators, and tool inventory",
+    "JWT authentication with role guards (ADMIN, MANAGER, EMPLOYEE) and bcrypt password hashing"
+  ],
+  "publicApiSurface": [
+    "POST /auth/register",
+    "POST /auth/login",
+    "GET /auth/profile",
+    "GET /projects",
+    "POST /projects",
+    "GET /projects/:id",
+    "POST /projects/:id/tasks",
+    "GET /projects/:id/members",
+    "POST /projects/:id/members",
+    "GET /tasks/:id",
+    "PATCH /tasks/:id",
+    "DELETE /tasks/:id",
+    "GET /users",
+    "POST /users",
+    "GET /users/me",
+    "PATCH /users/:id",
+    "GET /tools",
+    "POST /tools",
+    "POST /tools/assign",
+    "GET /custodias",
+    "POST /custodias",
+    "GET /custodias/nomina",
+    "GET /custodias/:id/pdf",
+    "POST /chat/message",
+    "GET /chat/conversations",
+    "GET /admin/agents/catalog",
+    "POST /admin/agents",
+    "GET /companies",
+    "POST /companies",
+    "PATCH /companies/:id/logo",
+    "GET /personal/reclutamiento/puestos",
+    "POST /personal/reclutamiento/sync",
+    "GET /personal/drive/compliance/:cedula"
+  ]
 }

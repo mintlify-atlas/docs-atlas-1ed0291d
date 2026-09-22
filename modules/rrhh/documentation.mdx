@@ -1,0 +1,264 @@
+---
+title: "HR Document Generation with DOCX Templates"
+sidebarTitle: "Documentation"
+description: "Generate personalized HR documents (contracts, letters) from .docx templates stored in Google Drive using [VARIABLE] placeholders mapped to guard data."
+---
+
+The **Documentación** sub-module lives at `/rrhh/contracts` (`ContractsList.tsx`). Despite the internal path name, the page is labeled "Documentación" to the user — it covers any HR document type, not just employment contracts. From this page, RRHH can manage `.docx` templates, list previously generated documents, and navigate to the generation form. The same page also provides access to the Trainings and Complaints features documented at the end of this page.
+
+## Contract Templates (`ContractTemplate`)
+
+A template is a `.docx` file stored in Google Drive that contains variable placeholders in `[VARIABLE]` format (e.g. `[NOMBRE]`, `[CEDULA]`). MejoraGemeseg detects these variables automatically when RRHH links the Drive file, maps each one to a known system field or leaves it for manual entry, and uses that mapping every time a document is generated from the template.
+
+```prisma
+model ContractTemplate {
+  id        Int             @id @default(autoincrement())
+  name      String
+  // Free text — RRHH writes any document type name they need
+  // ("Contrato Término Indefinido", "Acta de Entrega de Uniformes", etc.)
+  // without requiring a code change or migration.
+  type      String
+  driveUrl  String?   // link to the .docx source file in Drive
+  docxPath  String?   // local path after downloading for processing
+  companyId Int
+  createdBy Int
+  createdAt DateTime        @default(now())
+  fields    ContractField[]
+  contracts Contract[]
+}
+
+// One row per [VARIABLE] detected in the .docx.
+// systemField (if set) identifies the guard data field that auto-fills this
+// variable. If null, RRHH enters the value manually when generating.
+model ContractField {
+  id           Int              @id @default(autoincrement())
+  templateId   Int
+  variableName String
+  label        String
+  isRequired   Boolean          @default(true)
+  systemField  String?
+  order        Int              @default(0)
+}
+```
+
+<Warning>
+Variables must use **`[VARIABLE]`** format only. The `<<VARIABLE>>` format was intentionally removed to avoid confusion for anyone building templates. Any placeholder not in square brackets will not be detected or replaced.
+</Warning>
+
+### Template Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/personal/contracts/templates` | List all templates for the company |
+| `POST` | `/personal/contracts/templates` | Create a template (supply `name`, `type`, `driveUrl`) |
+| `PATCH` | `/personal/contracts/templates/:id` | Update name, type, or driveUrl |
+| `DELETE` | `/personal/contracts/templates/:id` | Delete (blocked if generated documents exist) |
+| `GET` | `/personal/contracts/templates/types` | Return the distinct `type` values already used — consumed by the "type" selector in the creation form with a "+ Add new type..." option |
+
+The `POST /personal/contracts/templates` body:
+
+```typescript
+class CreateContractTemplateDto {
+  name: string;      // e.g. "Contrato Término Indefinido"
+  type: string;      // e.g. "Contrato" — free text, no enum
+  driveUrl?: string; // full Google Drive share URL to the .docx
+}
+```
+
+## Auto-Fill Variables
+
+When generating a document, `ContractService.buildAutoFillValues(companyId, cedula)` reads data from `GuardiaFichaPersonal` and `AsignacionGuardia`/`Entidad` and maps it to the template variables. The supported system fields are:
+
+| Variable in template | Source |
+|---------------------|--------|
+| `[NOMBRE]` | `GuardiaFichaPersonal` — derived from the guard's Drive folder name |
+| `[CEDULA]` | Guard's cédula (identity key) |
+| `[PUESTO]` | `GuardiaFichaPersonal.puestoFormal` |
+| `[ENTIDAD]` | `AsignacionGuardia` → `Entidad.nombre` (current active assignment) |
+| `[HORARIO]` | `GuardiaFichaPersonal.horario` |
+| `[SALARIO]` | `GuardiaFichaPersonal.salarioAcordado` |
+| `[FECHA]` | Current date at generation time |
+| `[EMPRESA]` | `Company.name` for the tenant |
+
+If a guard's personal record (`GuardiaFichaPersonal`) is missing `horario`, `puestoFormal`, or `salarioAcordado`, those fields are left blank in the auto-fill proposal — RRHH completes them manually in the generation form before confirming.
+
+<Tip>
+These three labor fields (`horario`, `puestoFormal`, `salarioAcordado`) live in `GuardiaFichaPersonal`, **not** in `AsignacionGuardia` (which is a read-only sync artifact). Edit them from the **"Ficha"** modal in `/rrhh/guardias` before generating a document, so they auto-fill correctly.
+</Tip>
+
+## Generating a Document
+
+The `GenerarDocumento.tsx` page is accessed from the **"+ Generar Documento"** button in `ContractsList.tsx`. It is a dedicated page (`/rrhh/contracts/generar`), not a modal inside Listado de Guardias — the entry point for documentation is the documentation page itself.
+
+<Steps>
+  <Step title="Select a guard and template type">
+    RRHH searches for the guard by name or cédula and selects the template type from the dropdown (populated by `GET /personal/contracts/templates/types`).
+  </Step>
+  <Step title="Review auto-filled fields">
+    Known fields are pre-filled from `buildAutoFillValues`. RRHH reviews and can override any value. Required fields without a value are highlighted.
+  </Step>
+  <Step title="Complete manual fields">
+    Any `ContractField` without a `systemField` mapping is shown as a blank input. These must be filled before generating.
+  </Step>
+  <Step title="Generate the document">
+    Submitting calls `POST /personal/contracts/generate`. The backend downloads the `.docx` from Drive, replaces all `[VARIABLE]` placeholders using the shared `docx-merge.util.ts` helper (the same pipeline used by the Ventas contracts module), and produces both a `.docx` and a PDF.
+  </Step>
+  <Step title="Review output">
+    The generated PDF and `.docx` are stored in `uploads/hr-contracts/` on the server. A row is created in `Contract` with status `DRAFT`. The file is available for download from `ContractsList.tsx`.
+  </Step>
+</Steps>
+
+```typescript
+class GenerateContractDto {
+  templateId: number;
+  cedula: string;
+  nombreGuardia: string;
+  fieldValues?: Record<string, string>; // all field values, auto-filled and manual
+}
+```
+
+Endpoint:
+
+```
+POST /personal/contracts/generate
+```
+
+<Note>
+**Signature is physical.** There is no electronic signature provider (SignWell or otherwise). The PDF is printed and signed by hand. Uploaded files are stored on local disk (`uploads/hr-contracts/`) — the same non-persistent Cloud Run limitation that applies to the Ventas contracts module.
+</Note>
+
+The `Contract` model identifies documents by `cedula` and `nombreGuardia` (no FK to `EmployeeDriveFolder`) so the record survives even if the guard's Drive folder is later archived or deleted.
+
+List generated contracts:
+
+```
+GET /personal/contracts
+```
+
+---
+
+## Trainings (`/rrhh/capacitaciones`)
+
+Trainings are group-level compliance records — a training is marked completed **once for the whole group**, not per individual guard.
+
+```prisma
+model Training {
+  id           Int                  @id @default(autoincrement())
+  name         String
+  // Frontend catalog: Inducción | Seguridad física | Primeros auxilios |
+  // Uso de armas | Manejo defensivo | Legal | Otro (+ free text)
+  // String in DB, not a Prisma enum — new types need no migration.
+  type         String               @default("OTRO")
+  description  String?
+  dueDate      DateTime?
+  isAnnualPlan Boolean              @default(false)
+  completed    Boolean              @default(false)
+  completedAt  DateTime?
+  completedBy  Int?
+  companyId    Int
+  attachments  TrainingAttachment[]
+}
+
+model TrainingAttachment {
+  trainingId Int
+  url        String  // full Google Drive URL (e.g. https://drive.google.com/file/d/<id>/view)
+  name       String?
+  // DOCUMENTO (training plan/syllabus) | EVIDENCIA (proof of completion)
+  kind       String  @default("DOCUMENTO")
+}
+```
+
+Attachments are uploaded **directly to Drive** (never to local disk) via `DriveService.uploadFile()`. The upload endpoint is independent of a specific training ID, so files can be staged during the creation form before the training record is saved:
+
+```
+POST /personal/trainings/upload
+→ { url: "https://drive.google.com/file/d/<id>/view" }
+```
+
+### Training Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/personal/trainings` | List all trainings |
+| `POST` | `/personal/trainings` | Create a training |
+| `PATCH` | `/personal/trainings/:id` | Update name, type, description, dueDate |
+| `DELETE` | `/personal/trainings/:id` | Delete (unverified if it has evidence) |
+| `PATCH` | `/personal/trainings/:id/completed` | Toggle completion (body: `{ completed: boolean }`) |
+| `POST` | `/personal/trainings/upload` | Upload a file to the Capacitaciones Drive folder |
+| `POST` | `/personal/trainings/:id/attachments` | Link an uploaded file or URL to a training |
+| `DELETE` | `/personal/trainings/:id/attachments/:attachmentId` | Remove an attachment |
+
+**Completing a training** ("Registrar cumplimiento") opens a modal where RRHH can attach evidence before confirming. Once completed, the button changes to **"Revertir cumplimiento"** (with a confirmation). Reverting does not remove existing evidence attachments — the evidence section remains visible in the edit modal even after reverting.
+
+Trainings with a `dueDate` within the next 30 days (or already past due) and `completed = false` appear as **pending alerts** in the `PersonalDashboard.tsx` widget:
+
+```
+GET /personal/alerts
+```
+
+---
+
+## Complaints (`/rrhh/quejas`)
+
+The Buzón de Quejas y Sugerencias is split into two intentionally separate pages.
+
+### Submission Form (`/rrhh/quejas`)
+
+`ComplaintsPage.tsx` — accessible to **any authenticated employee** without requiring the `RRHH` section permission (it appears as a top-level Sidebar entry, not inside the RRHH sub-menu). There is no "my submitted complaints" history section — mixing a personal history with the anonymity option is contradictory by design.
+
+Key behavior: if `isAnonymous = true`, `Complaint.submittedBy` is stored as `null`. The author is **never** saved, not even in a hidden field.
+
+RRHH can add extra form fields via `ComplaintFieldDefinition`:
+
+```prisma
+model ComplaintFieldDefinition {
+  label     String
+  type      String   @default("TEXT")  // 'TEXT' | 'NUMBER' | 'DATE'
+  required  Boolean  @default(false)
+  order     Int      @default(0)
+  companyId Int
+}
+```
+
+The description field and anonymous checkbox are always present. Custom field responses are saved in `Complaint.customFieldValues` (JSON, keyed by field ID).
+
+```
+POST /personal/complaints           // submit a complaint
+GET/POST/PATCH/DELETE /personal/complaint-fields  // manage custom fields
+```
+
+### Management Board (`/rrhh/quejas/gestion`)
+
+`ComplaintsManagementPage.tsx` — gated by the `RRHH` section permission. Displays a **draggable Kanban board** (HTML5 native drag-and-drop, no library) with configurable stages managed per company (`ComplaintStage` model). The default seed stages for GEMESEG are:
+
+| Key | Label |
+|-----|-------|
+| `RECIBIDA` | Recibida |
+| `EN_SENSIBILIZACION` | En Sensibilización |
+| `EN_COMUNICACION` | En Comunicación |
+| `EN_SOLUCION` | En Solución |
+| `CERRADA` | Cerrada |
+
+Clicking a card opens the full detail with the stage-change history (`ComplaintStageChange`). Each stage transition can include an optional note.
+
+```prisma
+model ComplaintStageChange {
+  complaintId Int
+  fromStatus  String   // stored as plain text, no FK — survives stage deletion
+  toStatus    String
+  notes       String?
+  changedBy   Int
+  companyId   Int
+  createdAt   DateTime @default(now())
+}
+```
+
+Stage management endpoints:
+
+```
+PATCH /personal/complaints/:id/stage    // move a complaint to a new stage
+```
+
+<Note>
+Deleting a `ComplaintStage` is blocked if any complaints are currently in that stage. The stage marked `isInitial = true` cannot be deleted without designating another initial stage first.
+</Note>

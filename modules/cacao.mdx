@@ -1,0 +1,320 @@
+---
+title: "Cacao Inventory: Supply Chain from Reception to Shipment"
+sidebarTitle: "Cacao"
+description: "Track cacao supply chain for Mikacao S.A. through receptions, lots, quality-adjusted settlements, price fixings, shipments, and accounts payable/receivable."
+---
+
+The Cacao module implements a complete inventory and supply-chain management system for **Mikacao S.A.**, a cacao producer and exporter operating since 2010. The pipeline starts when raw cacao arrives from a supplier (Reception), automatically creates or updates an inventory Lot, and progresses through quality-adjusted Settlements, price Fixings, and Shipments — each step generating the corresponding accounts-payable or accounts-receivable records. All quantity values in the Kardex (inventory ledger) are stored in kilograms regardless of the unit used during purchase or sale.
+
+## Company Context
+
+| Field | Value |
+|-------|-------|
+| Company | Mikacao S.A. |
+| Products | CCN-51 (conventional), Nacional (fine aroma), Procesados |
+| Locations | Matriz — Los Ríos; Sucursal 1 — Manabí; Sucursal 2 — Guayas |
+
+## Supply-Chain Pipeline
+
+<Steps>
+  <Step title="Suppliers">
+    Register cacao suppliers with contact details, payment terms, and bank information (`CacaoSupplier`). Each reception is linked to a supplier.
+  </Step>
+  <Step title="Receptions">
+    Record incoming cacao via `CacaoReception`. Provide the guide number, supplier, gross weight, tare, humidity %, impurities %, unit of measure, and optionally a provisional price and differential. A Lot is automatically created or updated on reception.
+  </Step>
+  <Step title="Qualities">
+    `CacaoQuality` defines discount rules applied to receptions. Each quality has a humidity discount rate (default 7 %) and an impurity discount rate (default 1 %). Fixed-price qualities bypass market pricing entirely.
+  </Step>
+  <Step title="Lots">
+    Each `CacaoLot` accumulates receptions of the same quality. The lot travels through settlements, price fixings, and shipments. Lot codes follow the format `LOTE-YYYY-00001`. Status is `OPEN` until fully settled or shipped.
+  </Step>
+  <Step title="Settlements (LIQ-XXXX)">
+    `CacaoSettlement` closes a period of receptions for a supplier, applying quality discounts to compute the final price owed. Each settlement auto-generates a `CacaoPayable` record. Settlement IDs use the format `LIQ-XXXX`.
+  </Step>
+  <Step title="Price Fixings">
+    `CacaoPriceFixing` records provisional or definitive price agreements against a lot. A fixing transitions from `OPEN` to a definitive price once a reference price and differential are confirmed. Multiple fixings can exist per lot.
+  </Step>
+  <Step title="Shipments (EMB-XXXX)">
+    `CacaoShipment` exports cacao from one or more lots to a buyer (`CacaoClient`). Each shipment specifies a contract reference, sale price per kg, and total weight. A `CacaoReceivable` is created automatically. Shipment IDs use the format `EMB-XXXX`.
+  </Step>
+  <Step title="Payables & Receivables">
+    `CacaoPayable` (from settlements) and `CacaoReceivable` (from shipments) track outstanding balances. Individual payment records are registered under `CacaoPayment`.
+  </Step>
+</Steps>
+
+## Sub-modules
+
+| Sub-module | Prisma Model(s) | Key Purpose |
+|------------|----------------|-------------|
+| **Suppliers** | `CacaoSupplier` | Supplier registry with bank and payment terms |
+| **Clients** | `CacaoClient` | Buyer registry with country and contact info |
+| **Qualities** | `CacaoQuality` | Discount rules (humidity %, impurity %) and fixed-price flag |
+| **Receptions** | `CacaoReception` | Incoming cacao entries; auto-creates/updates lots |
+| **Lots** | `CacaoLot` | Inventory unit that aggregates receptions and drives Kardex |
+| **Settlements** | `CacaoSettlement`, `CacaoSettlementLot` | Period-close for supplier payables (LIQ-XXXX) |
+| **Price Fixings** | `CacaoPriceFixing` | Provisional → definitive price agreements per lot |
+| **Shipments** | `CacaoShipment`, `CacaoShipmentLot` | Export orders against lots (EMB-XXXX) |
+| **Payables** | `CacaoPayable` | Auto-generated from settlements |
+| **Receivables** | `CacaoReceivable` | Auto-generated from shipments |
+| **Payments** | `CacaoPayment` | Partial or full payment registrations against payables/receivables |
+| **Kardex** | `CacaoKardex` | Inventory ledger — always in kg |
+| **Unit Config** | `CacaoUnitConfig` | Configurable sack sizes |
+
+## Data Models
+
+### CacaoReception
+
+```prisma
+model CacaoReception {
+  id               Int           @id @default(autoincrement())
+  date             DateTime
+  supplierId       Int
+  guideNumber      String
+  unitOfMeasure    String        @default("KG")   // KG | TON | SACO
+  grossWeight      Float
+  tare             Float         @default(0)
+  netWeight        Float
+  humidity         Float         @default(0)
+  impurities       Float         @default(0)
+  provisionalPrice Float         @default(0)
+  differential     Float?
+  qualityId        Int?
+  lotId            Int?
+  companyId        Int
+  createdBy        Int
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+}
+```
+
+#### Create Reception Payload
+
+```typescript
+class CreateReceptionDto {
+  date: string;               // ISO 8601 date
+  supplierId: number;
+  guideNumber: string;
+  unitOfMeasure?: string;     // "KG" | "TON" | "SACO" — defaults to "KG"
+  grossWeight: number;
+  tare: number;
+  humidity: number;           // percentage
+  impurities: number;         // percentage
+  provisionalPrice?: number;
+  differential?: number;
+  qualityId?: number;
+  lotId?: number;             // assign to existing lot, or omit to auto-create
+}
+```
+
+### CacaoLot
+
+```prisma
+model CacaoLot {
+  id           Int     @id @default(autoincrement())
+  code         String  @unique  // Format: LOTE-YYYY-00001
+  qualityId    Int
+  netWeight    Float
+  averageCost  Float   @default(0)
+  status       String  @default("OPEN")
+  differential Float?
+  companyId    Int
+}
+```
+
+### CacaoSettlement
+
+```prisma
+model CacaoSettlement {
+  id              Int      @id @default(autoincrement())
+  date            DateTime
+  supplierId      Int
+  periodStart     DateTime
+  periodEnd       DateTime
+  totalNetWeight  Float    @default(0)
+  totalDeductions Float    @default(0)
+  finalPrice      Float    @default(0)
+  totalAmount     Float    @default(0)
+  status          String   @default("PENDING")
+  companyId       Int
+  // Auto-creates: CacaoPayable, CacaoSettlementLot[]
+}
+```
+
+### CacaoPriceFixing
+
+```prisma
+model CacaoPriceFixing {
+  id             Int       @id @default(autoincrement())
+  lotId          Int
+  referencePrice Float?
+  differential   Float?
+  fixedPrice     Float?
+  pendingWeight  Float?
+  fixedDate      DateTime?
+  deadline       DateTime?
+  status         String    @default("OPEN")  // OPEN | FIXED
+  companyId      Int
+}
+```
+
+### CacaoShipment
+
+```prisma
+model CacaoShipment {
+  id             Int      @id @default(autoincrement())
+  date           DateTime
+  clientId       Int
+  contractRef    String
+  unitOfMeasure  String   @default("KG")
+  totalWeight    Float
+  totalWeightKg  Float
+  totalCost      Float
+  salePricePerKg Float
+  salePrice      Float
+  margin         Float    @default(0)
+  status         String   @default("PENDING")
+  companyId      Int
+  // Auto-creates: CacaoReceivable, CacaoShipmentLot[]
+}
+```
+
+### CacaoKardex
+
+The Kardex is the single source of truth for inventory movement. All entries are stored in kg regardless of how the originating transaction was recorded.
+
+```prisma
+model CacaoKardex {
+  id            Int      @id @default(autoincrement())
+  lotId         Int
+  type          String          // ENTRADA | SALIDA | AJUSTE
+  quantity      Float           // in kg
+  unitCost      Float
+  totalCost     Float
+  balanceQty    Float           // running balance in kg
+  balanceCost   Float
+  date          DateTime
+  reference     String?
+  referenceUnit String?
+  companyId     Int
+}
+```
+
+### CacaoQuality
+
+```prisma
+model CacaoQuality {
+  id               Int     @id @default(autoincrement())
+  name             String  @unique
+  humidityDiscount Float   @default(7)    // deduction percentage
+  impurityDiscount Float   @default(1)    // deduction percentage
+  isFixedPrice     Boolean @default(false)
+  fixedPrice       Float?
+}
+```
+
+## Units of Measure
+
+Cacao can be received in three units and sold in SACO. The Kardex always normalises to kg.
+
+| Context | Allowed Units |
+|---------|--------------|
+| Purchase (receptions) | `TON`, `KG`, `SACO` |
+| Sale (shipments) | `SACO` |
+| Kardex / internal | Always `KG` |
+
+### Configurable Sack Sizes (CacaoUnitConfig)
+
+`CacaoUnitConfig` allows per-company customisation of sack weights. The system ships with these standard values:
+
+| Name | Display Name | kg / unit | Default |
+|------|-------------|-----------|---------|
+| `SACO_MICHOACAN` | Saco Michoacán | 90 kg | Yes |
+| `SACO_ESTANDAR` | Saco Estándar | 69 kg | No |
+| `SACO_PERSONALIZADO` | Saco Personalizado | 62 kg | No |
+
+```prisma
+model CacaoUnitConfig {
+  id          Int     @id @default(autoincrement())
+  name        String
+  displayName String
+  kgPerUnit   Float
+  isDefault   Boolean @default(false)
+  companyId   Int
+}
+```
+
+## Document ID Formats
+
+| Entity | Format | Example |
+|--------|--------|---------|
+| Settlement | `LIQ-XXXX` | `LIQ-0042` |
+| Shipment | `EMB-XXXX` | `EMB-0017` |
+| Lot code | `LOTE-YYYY-00001` | `LOTE-2025-00001` |
+
+## Decimal Precision and Rounding
+
+<Note>
+  All monetary and weight calculations use a maximum of **4 decimal places**. The `round4()` helper enforces this throughout the service layer. A tolerance of `+0.001 kg` is applied when comparing weights to account for floating-point rounding. Dates are formatted using `formatDateEc()`, which uses UTC methods to produce `DD/MM/YYYY` strings consistent with Ecuador's locale.
+</Note>
+
+## Supplier and Client Models
+
+### CacaoSupplier
+
+```prisma
+model CacaoSupplier {
+  id           Int      @id @default(autoincrement())
+  name         String
+  contact      String?
+  phone        String?
+  paymentTerms String?
+  bank         String?
+  companyId    Int
+}
+```
+
+### CacaoClient
+
+```prisma
+model CacaoClient {
+  id        Int      @id @default(autoincrement())
+  name      String
+  country   String?
+  contact   String?
+  email     String?
+  phone     String?
+  companyId Int
+}
+```
+
+## Accounts Payable and Receivable
+
+Both payable and receivable records are auto-generated — payables from settlements, receivables from shipments. Payments are registered separately and tracked against them.
+
+| Model | Trigger | Tracks |
+|-------|---------|--------|
+| `CacaoPayable` | Settlement created | Amount owed to supplier |
+| `CacaoReceivable` | Shipment created | Amount owed by buyer |
+| `CacaoPayment` | Manual registration | Partial or full payment against either |
+
+Both models carry a `status` field (`PENDING` → `PARTIAL` → `PAID`), `dueDate`, `paidAmount`, and `totalAmount`.
+
+### Key Source Files
+
+```
+backend/src/modules/cacao/cacao.module.ts
+backend/src/modules/cacao/receptions/
+backend/src/modules/cacao/lots/
+backend/src/modules/cacao/qualities/
+backend/src/modules/cacao/settlements/
+backend/src/modules/cacao/price-fixings/
+backend/src/modules/cacao/shipments/
+backend/src/modules/cacao/payables/
+backend/src/modules/cacao/receivables/
+backend/src/modules/cacao/kardex/
+backend/src/modules/cacao/unit-config/
+backend/src/modules/cacao/suppliers/
+backend/src/modules/cacao/clients/
+backend/src/modules/cacao/dashboard/
+```

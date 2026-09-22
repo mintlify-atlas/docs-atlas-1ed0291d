@@ -1,0 +1,233 @@
+---
+title: "AI Chat Assistant Powered by GitHub Models (gpt-4o-mini)"
+sidebarTitle: "AI Chat"
+description: "MejoraGemeseg includes a floating AI chat drawer backed by GitHub Models gpt-4o-mini, with per-user rate limiting, conversation history, and page context detection."
+---
+
+MejoraGemeseg ships with an AI chat assistant available on every page of the platform. It is backed by GitHub Models using the `gpt-4o-mini` model and is designed to answer questions about projects, tasks, and operational data in context. Users interact with the chat through a floating action button that opens a side drawer without leaving their current workflow. Every conversation is persisted in the database, rate-limited per user, and scoped to a specific AI agent.
+
+## User Interface
+
+The chat is surfaced as a **floating action button (FAB)** fixed to the bottom-right corner of every authenticated page. Clicking it opens a slide-in side drawer. From the drawer the user can:
+
+- Select an agent from a dropdown populated by `GET /agents/available` (global agents plus their own assigned agents).
+- Browse previous conversation threads for the selected agent.
+- Start a new thread or resume an existing one.
+- Send and receive messages in a scrollable message list.
+
+The drawer never triggers a navigation event, so users can continue reading dashboards, forms, or reports while chatting.
+
+## GitHub Models Integration
+
+The backend calls the GitHub Models inference endpoint at `https://models.inference.ai.azure.com/chat/completions` using `gpt-4o-mini`. Authentication is performed with a `Bearer` token read from the `GITHUB_TOKEN` environment variable.
+
+```
+GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
+```
+
+<Note>
+  If `GITHUB_TOKEN` is absent or set to the placeholder `YOUR_GITHUB_TOKEN_HERE`, the service automatically falls back to **mock responses** — keyword-based replies generated locally without any external API call. This allows local development without a GitHub token while keeping all database and conversation logic functional.
+</Note>
+
+When GitHub Models is active, the model is called with `max_tokens: 1024` and `temperature: 0.7`. Each assistant reply is stored in the `ChatMessage` table alongside `tokensUsed` and the literal model string `"gpt-4o-mini"`. Mock replies store `"mock"` as the model value.
+
+### Intent detection
+
+The service includes a two-pass intent mechanism. If the model returns a tag of the form `[INTENCION: intent_name]` in its first reply, the backend queries the database for the corresponding data and makes a second, focused call to produce the final answer. Available built-in intents are:
+
+| Intent | Description |
+|---|---|
+| `list_projects` | Lists the user's projects |
+| `count_tasks_by_status` | Groups tasks by status |
+| `user_info` | Returns current user details |
+| `project_summary` | Summarises a specific project |
+| `list_my_tasks` | Lists tasks assigned to the user |
+
+## Rate Limiting
+
+Each user is allowed **50 successful messages per calendar day**. The limit is enforced in the service layer before any AI call is made, using the `AiLog` table:
+
+```
+RATE_LIMIT = 50 messages / user / day
+```
+
+Exceeding the limit returns HTTP **429 Too Many Requests** with the message:
+
+```
+Has alcanzado el límite de 50 mensajes hoy. Intenta mañana.
+```
+
+The counter resets at midnight (server local time) because the query filters `AiLog.createdAt >= today 00:00:00`.
+
+## Conversation Model
+
+Each combination of `(userId, agentId)` can produce multiple `Conversation` threads. A `Conversation` record stores the `context` string captured at the time the thread was created (see [Context Detection](#context-detection) below). All `ChatMessage` rows belonging to a conversation are retrieved in ascending `createdAt` order, and the last **20 messages** are included as history in every new API call to keep token usage bounded.
+
+```prisma
+model Conversation {
+  id        Int           @id @default(autoincrement())
+  userId    Int
+  agentId   Int
+  context   String
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  messages  ChatMessage[]
+  agent     Agent         @relation(fields: [agentId], references: [id])
+  user      User          @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([agentId])
+}
+
+model ChatMessage {
+  id             Int          @id @default(autoincrement())
+  conversationId Int
+  role           String       // "user" | "assistant"
+  content        String
+  tokensUsed     Int?
+  model          String?
+  createdAt      DateTime     @default(now())
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
+```
+
+## Context Detection
+
+The frontend reads the current browser URL path and passes it to the API as the `context` field. The backend injects this string into the user message prefix sent to the model:
+
+```
+[Contexto: /proyectos/42] ¿Cuáles son las tareas pendientes?
+```
+
+This allows the model to give location-aware answers — for example, a question about "tasks" while on a project detail page will naturally be answered in the context of that project.
+
+## Endpoints
+
+### `POST /chat/message`
+
+Sends a message to the AI assistant. Creates a new conversation thread if `conversationId` is omitted. Requires a valid JWT.
+
+**Request body** (`SendMessageDto`):
+
+```json
+{
+  "message": "¿Cuántas tareas hay pendientes este mes?",
+  "conversationId": 17,
+  "agentId": 3,
+  "context": "/dashboard"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `message` | `string` | ✅ | The user's message text. |
+| `context` | `string` | ✅ | Current page path, used as AI context prefix. |
+| `conversationId` | `number` | ❌ | Resume an existing thread; omit to start a new one. |
+| `agentId` | `number` | ❌ | Target agent; defaults to the global `"Agente GEMESEG"`. |
+
+**Response**:
+
+```json
+{
+  "reply": "Actualmente tienes 12 tareas en estado TODO, 4 en IN_PROGRESS y 1 en DONE.",
+  "conversationId": 17,
+  "agentId": 3
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `reply` | `string` | The assistant's text response. |
+| `conversationId` | `number` | The thread ID (new or existing). |
+| `agentId` | `number` | The agent that produced the reply. |
+
+<Note>
+  A `429 Too Many Requests` is returned when the daily rate limit of 50 messages has been reached. The response body contains a Spanish-language message indicating when the limit resets.
+</Note>
+
+---
+
+### `GET /chat/conversations`
+
+Returns all conversation threads for the authenticated user, optionally filtered by agent.
+
+**Query parameters:**
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `agentId` | `number` | ❌ | Filter threads to a specific agent. |
+
+**Example request:**
+
+```http
+GET /chat/conversations?agentId=3
+Authorization: Bearer <token>
+```
+
+**Example response:**
+
+```json
+[
+  {
+    "id": 17,
+    "userId": 5,
+    "agentId": 3,
+    "context": "/dashboard",
+    "createdAt": "2025-06-01T14:23:00.000Z",
+    "updatedAt": "2025-06-10T09:11:42.000Z",
+    "agent": { "id": 3, "name": "Asistente Proyectos" },
+    "_count": { "messages": 24 }
+  }
+]
+```
+
+---
+
+### `GET /chat/conversations/:id/messages`
+
+Returns all messages in a specific conversation thread. Only the owner of the conversation can access it; attempting to read another user's thread returns `404 Not Found`.
+
+**Example request:**
+
+```http
+GET /chat/conversations/17/messages
+Authorization: Bearer <token>
+```
+
+**Example response:**
+
+```json
+[
+  {
+    "id": "101",
+    "role": "user",
+    "content": "¿Cuántas tareas hay pendientes este mes?",
+    "timestamp": "2025-06-10T09:11:30.000Z"
+  },
+  {
+    "id": "102",
+    "role": "assistant",
+    "content": "Actualmente tienes 12 tareas en estado TODO, 4 en IN_PROGRESS y 1 en DONE.",
+    "timestamp": "2025-06-10T09:11:42.000Z"
+  }
+]
+```
+
+---
+
+## Mock Fallback Behaviour
+
+When GitHub Models is not configured, the service uses keyword matching to generate helpful responses from local database data:
+
+| Keyword in message | Mock behaviour |
+|---|---|
+| `proyecto` | Queries the 5 most-recent projects and lists `name [status]`. |
+| `tarea` | Groups all tasks by status and returns the counts. |
+| `usuario`, `perfil`, `quién soy` | Returns a static profile suggestion. |
+| *(anything else)* | Returns a generic fallback message including the `context` string. |
+
+<Tip>
+  The mock mode is intentionally useful in development — project and task queries hit the real database, so you can test the UI end-to-end without a GitHub token.
+</Tip>

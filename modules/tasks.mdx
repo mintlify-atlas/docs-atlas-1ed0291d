@@ -1,0 +1,169 @@
+---
+title: "Task Tracking and Kanban Board in MejoraGemeseg"
+sidebarTitle: "Tasks"
+description: "Manage tasks through four Kanban columns, assign multiple users, set priority, and track start/end dates within a project."
+---
+
+Tasks are the atomic unit of work within a project in MejoraGemeseg. Each task lives on a project's Kanban board, belongs to one of four workflow columns, can be assigned to one or more team members simultaneously, and carries optional scheduling and effort-estimation metadata. Any project member who is not a `VIEWER` can create and update tasks; `VIEWER` members see the full board but have all action buttons disabled rather than hidden.
+
+<CardGroup cols={2}>
+  <Card title="Four-Column Kanban" icon="table-columns">
+    Tasks move through **Por hacer → En progreso → En revisión → Completado**, each backed by a `TaskStatus` enum value.
+  </Card>
+  <Card title="Multiple Assignees" icon="user-group">
+    A single task can be simultaneously assigned to any number of project members via the `assigneeIds` array.
+  </Card>
+  <Card title="Priority Levels" icon="flag">
+    Four priority tiers — `LOW`, `MEDIUM`, `HIGH`, and `URGENT` — let teams surface the most critical work at a glance.
+  </Card>
+  <Card title="Scheduling & Estimation" icon="calendar-days">
+    Optional `startDate`, `endDate`, and `estimatedHours` fields give project managers timeline visibility without being mandatory.
+  </Card>
+</CardGroup>
+
+---
+
+## Task statuses
+
+Tasks progress through the following states, mapped to the four Kanban columns displayed in the UI.
+
+| `TaskStatus` value | Kanban column label | Meaning |
+|---|---|---|
+| `TODO` | Por hacer | Task is defined but not yet started. |
+| `IN_PROGRESS` | En progreso | Work is actively underway. |
+| `IN_REVIEW` | En revisión | Work is complete and awaiting review or sign-off. |
+| `DONE` | Completado | Task has been accepted and closed. |
+| `CANCELLED` | — | Task was abandoned; it is hidden from the active Kanban columns. |
+
+---
+
+## Task priorities
+
+| `Priority` value | Description |
+|---|---|
+| `LOW` | Nice-to-have; can be deferred without impact. |
+| `MEDIUM` | Standard priority — the default when none is specified. |
+| `HIGH` | Should be resolved before the next planning cycle. |
+| `URGENT` | Requires immediate attention; blocks other work or delivery. |
+
+---
+
+## Task data model
+
+The following fields are stored on every `Task` record. All fields except `title` are optional at creation time.
+
+| Field | Type | Required | Notes |
+|---|---|:---:|---|
+| `title` | `string` | ✅ | Short, descriptive label shown on the Kanban card. |
+| `description` | `string` | ❌ | Extended details, acceptance criteria, or notes. |
+| `status` | `TaskStatus` | ❌ | Defaults to `TODO` when not provided. |
+| `priority` | `Priority` | ❌ | Defaults to `MEDIUM` when not provided. |
+| `startDate` | ISO 8601 date string | ❌ | Planned start date. |
+| `endDate` | ISO 8601 date string | ❌ | Deadline or planned completion date. |
+| `estimatedHours` | `number` | ❌ | Effort estimate in hours. |
+| `assigneeIds` | `number[]` | ❌ | Array of user IDs to assign. Supports multiple assignees. |
+
+---
+
+## Creating a task
+
+<Steps>
+  <Step title="Verify membership">
+    Only project members with role `OWNER`, `MANAGER`, or `MEMBER` may create tasks. `VIEWER` members see the board but the **New Task** button is disabled.
+  </Step>
+  <Step title="POST to the project task endpoint">
+    Send a `POST` request to `/projects/:id/tasks` where `:id` is the project's numeric ID.
+
+    ```json title="POST /projects/:id/tasks — request body"
+    {
+      "title": "Implementar autenticación OAuth2",
+      "description": "Integrar Google OAuth2 en el flujo de login del portal de clientes.",
+      "priority": "HIGH",
+      "status": "TODO",
+      "startDate": "2025-03-10",
+      "endDate": "2025-03-21",
+      "estimatedHours": 12,
+      "assigneeIds": [5, 17]
+    }
+    ```
+  </Step>
+  <Step title="Task appears on the Kanban board">
+    The new task immediately appears in the **Por hacer** column (or whichever column corresponds to the `status` value you provided) for all project members.
+  </Step>
+</Steps>
+
+---
+
+## Updating a task
+
+Send a `PATCH /tasks/:id` request with any subset of the updatable fields. Only the fields included in the request body are changed; omitted fields keep their current values.
+
+```json title="PATCH /tasks/:id — example: move to review and add an assignee"
+{
+  "status": "IN_REVIEW",
+  "assigneeIds": [5, 17, 23]
+}
+```
+
+<Note>
+  When `assigneeIds` is provided, the entire assignee list is **replaced** — not appended. To add a single user, include all current assignees plus the new one in the array.
+</Note>
+
+```json title="PATCH /tasks/:id — example: update priority and deadline"
+{
+  "priority": "URGENT",
+  "endDate": "2025-03-15"
+}
+```
+
+### Updatable fields
+
+| Field | Type | Notes |
+|---|---|---|
+| `title` | `string` | Rename the task. |
+| `description` | `string` | Update or clear the description. |
+| `status` | `TaskStatus` | Moves the card to a different Kanban column. |
+| `priority` | `Priority` | Change urgency level. |
+| `startDate` | ISO 8601 date string | Update the planned start date. |
+| `endDate` | ISO 8601 date string | Update the deadline. |
+| `estimatedHours` | `number` | Revise the effort estimate. |
+| `assigneeIds` | `number[]` | Replace the full assignee list. |
+
+---
+
+## Multiple assignees
+
+A task can be owned by more than one person at a time. The relationship is stored in the `TaskAssignee` join table with a unique constraint on `(taskId, userId)` — the same user cannot appear twice on a single task.
+
+```json title="Creating a task with three assignees"
+{
+  "title": "QA del módulo de reportes",
+  "assigneeIds": [8, 14, 22]
+}
+```
+
+Each assigned user sees the task appear in their personal task view, and the task card on the Kanban board displays the avatars of all assignees.
+
+---
+
+## Viewer restriction
+
+Members with the `VIEWER` role have unrestricted **read access** to the entire project board:
+
+- All four Kanban columns and their cards are fully visible.
+- Task details, assignees, dates, and descriptions are all readable.
+- The **Create Task**, **Edit**, and **Delete** buttons are rendered in the UI but are **disabled** — they are not removed from the DOM.
+
+This explicit disabled state (rather than hidden controls) signals to viewers why they cannot take action, and preserves the visual layout for all role types.
+
+---
+
+## Endpoint reference
+
+| Method | Path | Who can call | Description |
+|---|---|---|---|
+| `POST` | `/projects/:id/tasks` | Non-`VIEWER` project members | Create a new task in the project. |
+| `GET` | `/projects/:id/tasks` | Project members | List all tasks for the project (Kanban board data). |
+| `GET` | `/tasks/:id` | Project members | Retrieve a single task with full details and assignee list. |
+| `PATCH` | `/tasks/:id` | Non-`VIEWER` project members | Partially update any task field(s). |
+| `DELETE` | `/tasks/:id` | `OWNER` or `ADMIN` | Permanently delete a task. |

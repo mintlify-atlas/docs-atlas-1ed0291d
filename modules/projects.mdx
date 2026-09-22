@@ -1,0 +1,171 @@
+---
+title: "Project Management: Members, Roles, and Kanban Workflow"
+sidebarTitle: "Projects"
+description: "Create projects, assign members with OWNER/MANAGER/MEMBER/VIEWER roles, and track work through a four-column Kanban board."
+---
+
+The Projects module is the central workspace for organizing collaborative work inside MejoraGemeseg. Any authenticated user can create a project and immediately begin adding team members, defining milestones, and tracking progress through a four-column Kanban board. Every project belongs to a company tenant, and access is always filtered by membership — users only ever see projects they have been added to, unless they carry the platform-level `ADMIN` role.
+
+<CardGroup cols={2}>
+  <Card title="Create & Configure" icon="folder-plus">
+    Any authenticated user can create a project. The creator is automatically enrolled as `OWNER`. Platform Admins are also auto-added as `OWNER` on every project within their company.
+  </Card>
+  <Card title="Role-Based Access" icon="shield-halved">
+    Four project-level roles (`OWNER`, `MANAGER`, `MEMBER`, `VIEWER`) control what each member can read, edit, or delete inside the project.
+  </Card>
+  <Card title="Kanban Board" icon="table-columns">
+    Tasks are organized into four columns — **Por hacer**, **En progreso**, **En revisión**, and **Completado** — each mapped to a `TaskStatus` enum value.
+  </Card>
+  <Card title="Member Management" icon="users-gear">
+    OWNERs and Admins can add or remove members and change roles at any time. The last OWNER of a project can never be removed.
+  </Card>
+</CardGroup>
+
+---
+
+## Project states
+
+A project's lifecycle is tracked via the `ProjectStatus` enum stored on the `Project` model.
+
+| Status | Description |
+|---|---|
+| `ACTIVE` | The project is underway and open for new tasks. |
+| `ON_HOLD` | Work is paused; the project remains visible but tasks are not actively progressed. |
+| `COMPLETED` | All work is done. The project is closed to new tasks. |
+| `CANCELLED` | The project has been abandoned before completion. |
+
+---
+
+## Project-level roles
+
+When a user is added as a member, they are assigned one of four `MemberRole` values. These roles are **project-scoped** — they are independent of the user's platform role (`ADMIN`, `MANAGER`, `EMPLOYEE`).
+
+| Role | Can View | Can Edit Tasks | Can Manage Members | Can Delete Project |
+|---|:---:|:---:|:---:|:---:|
+| `OWNER` | ✅ | ✅ | ✅ | ✅ |
+| `MANAGER` | ✅ | ✅ | ✅ (non-OWNER) | ❌ |
+| `MEMBER` | ✅ | ✅ | ❌ | ❌ |
+| `VIEWER` | ✅ | ❌ (buttons disabled) | ❌ | ❌ |
+
+<Note>
+  `VIEWER` members can see the entire project — board, tasks, and member list — but all action buttons (create task, edit, delete) are **disabled**, not hidden. This makes the read-only boundary explicit in the UI.
+</Note>
+
+<Note>
+  Only a platform-level `ADMIN` can promote a member to `OWNER` or change the role of an existing `OWNER`. Admins are also automatically added as `OWNER` on every project in their company at creation time.
+</Note>
+
+---
+
+## Creating a project
+
+<Steps>
+  <Step title="Send the create request">
+    Any authenticated user can `POST /projects`. Supply at minimum a `name`; all other fields are optional.
+
+    ```json title="POST /projects — request body"
+    {
+      "name": "Rediseño de portal de clientes",
+      "description": "Migrar el portal legacy a React 18 con nueva identidad visual.",
+      "startDate": "2025-02-01",
+      "endDate": "2025-06-30",
+      "status": "ACTIVE"
+    }
+    ```
+
+    | Field | Type | Required | Notes |
+    |---|---|:---:|---|
+    | `name` | `string` | ✅ | Non-empty string. |
+    | `description` | `string` | ❌ | Free-form text. |
+    | `startDate` | ISO 8601 date string | ❌ | Pass `""` to clear. |
+    | `endDate` | ISO 8601 date string | ❌ | Pass `""` to clear. |
+    | `status` | `ProjectStatus` | ❌ | Defaults to `ACTIVE`. |
+  </Step>
+  <Step title="Automatic OWNER enrollment">
+    The system automatically creates a `ProjectMember` row linking the requesting user to the new project with `role: OWNER`. If the requester's platform role is `ADMIN`, they are enrolled as `OWNER` regardless of who triggered creation.
+  </Step>
+  <Step title="Start adding members">
+    Use `POST /projects/:id/members` to invite collaborators. Provide the target user's ID and the desired project role.
+
+    ```json title="POST /projects/:id/members — request body"
+    {
+      "userId": 42,
+      "role": "MEMBER"
+    }
+    ```
+  </Step>
+  <Step title="Create tasks on the board">
+    Once members are set up, tasks can be created via `POST /projects/:id/tasks`. See the [Tasks module](/modules/tasks) for the full task creation reference.
+  </Step>
+</Steps>
+
+---
+
+## Listing and filtering projects
+
+`GET /projects` returns only the projects the authenticated user is a member of. Results are paginated at **10 items per page** and can be filtered by `status`.
+
+```http title="GET /projects — query parameters"
+GET /projects?status=ACTIVE&page=2
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `status` | `ProjectStatus` | Filter by `ACTIVE`, `ON_HOLD`, `COMPLETED`, or `CANCELLED`. |
+| `page` | `integer ≥ 1` | Page number (default `1`). Page size is fixed at 10. |
+
+<Tip>
+  Platform Admins can call `GET /projects/admin/stats` to retrieve aggregate statistics across all company projects — total counts, breakdown by status, and member counts.
+</Tip>
+
+---
+
+## Member management
+
+### Add a member
+
+```json title="POST /projects/:id/members"
+{
+  "userId": 99,
+  "role": "VIEWER"
+}
+```
+
+Only `OWNER` members or platform `ADMIN` users may add members. The `role` must be one of `OWNER`, `MEMBER`, or `VIEWER`.
+
+### Change a member's role
+
+```json title="PATCH /projects/:id/members/:userId/role"
+{
+  "role": "MANAGER"
+}
+```
+
+<Note>
+  Only a platform `ADMIN` can assign or change the `OWNER` role. Project `OWNER`s can change roles for `MANAGER`, `MEMBER`, and `VIEWER` members but cannot promote someone to `OWNER` without Admin authority.
+</Note>
+
+### Remove a member
+
+```http
+DELETE /projects/:id/members/:userId
+```
+
+The system blocks removal of the last `OWNER` of a project. An `OWNER` also cannot remove themselves if doing so would leave the project with no owner.
+
+---
+
+## Endpoint reference
+
+| Method | Path | Who can call | Description |
+|---|---|---|---|
+| `POST` | `/projects` | Any authenticated user | Create a new project. |
+| `GET` | `/projects` | Project members | List projects filtered by membership and optional `status`. |
+| `GET` | `/projects/:id` | Project members | Retrieve a single project with its members and task summary. |
+| `GET` | `/projects/admin/stats` | `ADMIN` only | Aggregate statistics across all company projects. |
+| `POST` | `/projects/:id/members` | `OWNER` or `ADMIN` | Add a user to the project with a given role. |
+| `GET` | `/projects/:id/members` | Project members | List all current members and their roles. |
+| `DELETE` | `/projects/:id/members/:userId` | `OWNER` or `ADMIN` | Remove a member (blocked if removing the last `OWNER`). |
+| `PATCH` | `/projects/:id/members/:userId/role` | `ADMIN` (for OWNER role); `OWNER` (for other roles) | Change a member's project role. |
+| `POST` | `/projects/:id/tasks` | Non-`VIEWER` members | Create a task inside the project. |
+| `GET` | `/projects/:id/tasks` | Project members | List all tasks for the project. |

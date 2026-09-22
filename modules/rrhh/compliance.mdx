@@ -1,0 +1,240 @@
+---
+title: "Document Compliance Tracking for Guards and Administrative Staff"
+sidebarTitle: "Compliance"
+description: "MejoraGemeseg checks guard and admin staff document compliance against configurable requirements, with traffic-light status indicators and reminder sending."
+---
+
+The Compliance sub-module gives RRHH a real-time view of which documents every guard (or administrative staff member) has submitted, which are missing or expiring, and whether each has been approved. Document files live in Google Drive — MejoraGemeseg reads them via sync and matches them against configurable requirements, never storing the files itself.
+
+## Entities and Requirements (`Entidad`, `RequisitoDocumento`)
+
+Before compliance can be checked, RRHH needs a catalog of client entities and the documents each requires. This is managed at `/rrhh/entidades` (`EntidadesList.tsx`, "Entidades y Requisitos").
+
+```prisma
+model Entidad {
+  id            Int      @id @default(autoincrement())
+  nombre        String
+  tipo          String   // 'PUBLICA' | 'PRIVADA'
+  activo        Boolean  @default(true)
+  // Anchors this entity to its Drive folder (stable across renames).
+  // Null for manually-created entities that have never been synced.
+  driveFolderId String?
+  companyId     Int
+  asignaciones  AsignacionGuardia[]
+  requisitos    RequisitoDocumento[]
+}
+```
+
+Entities are **also created automatically** by `syncEntidadesFolder` when a new entity folder appears in Drive. The catalog is never deleted by a Drive accident — if the folder disappears, the entity record stays, preserving its `RequisitoDocumento` config and assignment history.
+
+### Requirement Layers
+
+`RequisitoDocumento` supports four tiers that stack on each guard's checklist:
+
+```prisma
+model RequisitoDocumento {
+  nombre             String
+  // GLOBAL | PUBLICA | PRIVADA | ENTIDAD
+  aplicaA            String
+  // Only set when aplicaA = 'ENTIDAD'
+  entidadId          Int?
+  // How long this document type is valid (null = does not expire)
+  duracionValor      Int?
+  duracionUnidad     String?  // 'DIAS' | 'MESES' | 'ANIOS'
+  // How far in advance to warn about expiry
+  anticipacionValor  Int      @default(30)
+  anticipacionUnidad String   @default("DIAS")  // 'DIAS' | 'SEMANAS' | 'MESES'
+  companyId          Int
+}
+```
+
+| `aplicaA` | Applies to |
+|-----------|-----------|
+| `GLOBAL` | Every guard in the company, regardless of entity |
+| `PUBLICA` | Guards assigned to any `tipo='PUBLICA'` entity |
+| `PRIVADA` | Guards assigned to any `tipo='PRIVADA'` entity |
+| `ENTIDAD` | Guards assigned to one specific entity (`entidadId` set) |
+
+A guard's checklist is the union of the `GLOBAL` requirements plus the requirements for their entity's `tipo` plus any `ENTIDAD`-specific requirements for their current assignment.
+
+<Note>
+The **"Tipo"** field on an `Entidad` (Pública / Privada) is **editable by hand** in `EntidadesList.tsx`. If the Drive folder is under `Público/` but the record says `PRIVADA`, the sync reports the mismatch in `entidadesTipoDistinto` and **never overwrites** the stored value — RRHH corrects it manually from this page.
+</Note>
+
+Endpoints for entities and requirements:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/personal/entidades` | List all entities |
+| `POST` | `/personal/entidades` | Create an entity manually |
+| `PATCH` | `/personal/entidades/:id` | Update name, type, active status |
+| `DELETE` | `/personal/entidades/:id` | Delete (blocked if it has active assignments) |
+| `GET` | `/personal/requisitos-documento` | List all requirements |
+| `POST` | `/personal/requisitos-documento` | Create a requirement |
+| `PATCH` | `/personal/requisitos-documento/:id` | Update |
+| `DELETE` | `/personal/requisitos-documento/:id` | Delete |
+
+## Document Sync — Drive as Source
+
+Documents are synced into `EmployeeDocument` rows by `syncEntidadesFolder`. Each document file in a guard's Drive folder becomes one row, matched against `DocumentType` records by a fuzzy name-matching algorithm (`scoreMatch`). The match is deterministic (highest score wins; each file maps to at most one type).
+
+```prisma
+model EmployeeDocument {
+  employeeName  String
+  cedula        String
+  fileName      String
+  fileUrl       String
+  driveFileId   String   @unique
+  folder        String   // 'CUSTODIAS' for guards
+  companyId     Int
+  issueDate     DateTime?
+  expiryDate    DateTime?
+  expiryConfirmedBy Int?
+
+  @@unique([companyId, driveFileId])
+}
+```
+
+The compliance checklist for a guard is returned by:
+
+```
+GET /personal/drive/compliance/:cedula
+```
+
+This endpoint returns — per guard, per required document type — the current status, the matched `EmployeeDocument` (if any), and its `DocumentReview`.
+
+## Compliance Status Indicators
+
+`CumplimientoEntidadService` calculates four states per requirement per guard:
+
+| State | Meaning |
+|-------|---------|
+| `CUMPLIDO` 🟢 | Document present, not expired, within advance window |
+| `POR_VENCER` 🟡 | Document present but expiry is within the `anticipacionValor`/`anticipacionUnidad` window |
+| `VENCIDO` 🔴 | Document present but past its expiry date |
+| `FALTANTE` 🔴 | Document not found in Drive |
+
+<Note>
+A requirement configured with `duracionValor: null` (no expiry) is **never** marked `VENCIDO` or `POR_VENCER`, regardless of what expiry date the AI extraction may have suggested for the document. The RRHH-configured policy always wins.
+</Note>
+
+The **`CumplimientoEntidades.tsx`** page at `/rrhh/cumplimiento` shows this as a traffic-light table with search (by name or cédula) and filters by entity and status. Clicking a guard opens `GuardiaComplianceModal.tsx` with the full checklist, an editable personal data section, and the reminder button.
+
+The aggregate overview:
+
+```
+GET /personal/cumplimiento-entidades
+GET /personal/cumplimiento-entidades/:cedula
+```
+
+Guards with a completed `SALIDA` movement are excluded from this table by default (same `getCedulasFuera` logic used in Listado de Guardias).
+
+## Document Review and Approval
+
+RRHH can approve or reject each document in the checklist. Rejection requires a reason.
+
+```prisma
+model DocumentReview {
+  cedula              String
+  documentTypeId      Int?    // null for unmatched files
+  driveFileId         String? // used when documentTypeId is null
+  status              String  @default("PENDIENTE") // PENDIENTE | APROBADO | RECHAZADO
+  reason              String?
+  reviewedDriveFileId String? // snapshot of the reviewed file's Drive ID
+  reviewedFileName    String?
+  reviewedBy          Int
+  reviewedAt          DateTime @default(now())
+  companyId           Int
+  history             DocumentReviewHistory[]
+}
+
+model DocumentReviewHistory {
+  reviewId         Int
+  cedula           String
+  documentTypeName String  // denormalized — survives DocumentType rename/delete
+  fromStatus       String?
+  toStatus         String
+  reason           String?
+  driveFileId      String?
+  fileName         String?
+  performedBy      Int
+  companyId        Int
+  createdAt        DateTime @default(now())
+}
+```
+
+Review history is **append-only** and identified by `cedula` (not by FK to `EmployeeDriveFolder`). This means the trail survives even if the employee record is deleted — intentional for audit purposes.
+
+Endpoints:
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/personal/drive/documents/review` | Approve or reject a document (with reason) |
+| `GET` | `/personal/drive/documents/reviews/:cedula` | Current review status per document for a guard |
+| `GET` | `/personal/drive/documents/review-history` | Full audit trail |
+
+### Stale Reviews
+
+When a guard re-uploads a document (a new Drive file ID appears), the `DocumentReview` is flagged `stale = true` in the compliance response. RRHH knows the previously-approved version is no longer the file currently in Drive and should re-review.
+
+## Expiry Alert Reminders
+
+Reminders are **manual and per-guard** — there is no cron job or bulk-send endpoint. RRHH decides who to remind and when.
+
+```
+POST /personal/cumplimiento-entidades/guardia/:cedula/enviar-recordatorio
+```
+
+`AlertaVencimientoService.enviarRecordatorio` builds a consolidated email listing all `FALTANTE`, `VENCIDO`, and `POR_VENCER` documents for the guard and sends it via `GmailMailService`. The recipient address comes from `GuardiaContacto`:
+
+```prisma
+model GuardiaContacto {
+  cedula    String
+  email     String
+  companyId Int
+
+  @@unique([companyId, cedula])
+}
+```
+
+This record is set from the **"Configurar correo"** field in `GuardiaComplianceModal.tsx`.
+
+```
+GET  /personal/guardia-contacto/:cedula
+PATCH /personal/guardia-contacto/:cedula
+```
+
+<Warning>
+Email sending is blocked until **domain-wide delegation** is configured in Google Workspace Admin (`admin.google.com`). The service account `drive-sync@agentes-504115.iam.gserviceaccount.com` needs the scope `https://www.googleapis.com/auth/gmail.send` delegated, and `GMAIL_SENDER_ADDRESS` must be set to a real inbox in the domain. Until then, the button will fail gracefully (the error is logged in `AlertaVencimiento.errorMessage`) without breaking the compliance page.
+</Warning>
+
+`AlertaVencimiento` bookkeeping prevents duplicate sends: before sending, the service checks for a row with the same `(employeeDocumentId, requisitoDocumentoId, expiryDateAlertado)`. If RRHH corrects the expiry date, the snapshot changes and a new reminder becomes eligible.
+
+```prisma
+model AlertaVencimiento {
+  employeeDocumentId   Int
+  requisitoDocumentoId Int
+  expiryDateAlertado   DateTime // snapshot of expiry at send time
+  sentAt               DateTime @default(now())
+  success              Boolean  @default(true)
+  errorMessage         String?
+  companyId            Int
+
+  @@unique([employeeDocumentId, requisitoDocumentoId, expiryDateAlertado])
+}
+```
+
+## Administrative Staff Compliance
+
+`/rrhh/administrativo` (`AdministrativeStaff.tsx`, "Personal Administrativo") is an independent compliance checklist for office staff. It uses the same underlying models (`EmployeeDriveFolder`, `EmployeeDocument`, `DocumentReview`, `DocumentReviewHistory`) but has its **own Drive root** (`FolderConfig type='PERSONAL_ADMIN'`) and its own **"Configurar Drive"** wrench button.
+
+Key differences from guard compliance:
+
+- Folder names follow the `Nombre Apellido - Puesto` format (no cédula in the name). Identity is an opaque `identityKey` (`PA-<last 16 chars of Drive folder ID>`) — never a real ID number.
+- The `cedula` column in the UI is not shown (it would display the synthetic `PA-...` key, which is meaningless to RRHH). The `puesto` badge is displayed instead.
+- Documents are synced by `POST /personal/drive/sync-personal-admin`.
+- There is no support for generating contracts (`/rrhh/contracts`) for administrative staff — that feature is scoped to guards only.
+
+<Tip>
+The **"Fusionar cédulas duplicadas"** button (`CedulaMergeModal.tsx`) is also accessible from `EntidadesList.tsx`, but it requires `role === 'ADMIN'` — not just `canWrite('RRHH')`. It is for merging two *different* cédulas that turned out to be the same person (a Drive parse typo), not for re-hiring scenarios. Most RRHH users carry the `EMPLOYEE` role and will not see this button.
+</Tip>

@@ -1,0 +1,345 @@
+---
+title: "Companies API: Multi-Tenant Management and White-Label Branding"
+sidebarTitle: "Companies"
+description: "REST endpoints for company CRUD and branding. Super Admin manages all companies. Company Admin updates their own branding, logo, and section access."
+---
+
+The Companies module handles multi-tenant isolation and white-label theming for MejoraGemeseg. Every resource in the system is scoped to a `companyId`. A **Super Admin** (a user with `companyId: null`) can view and manage all companies. A **Company Admin** can only view and update their own company. The white-label system allows each company to set its own logo, color palette (`primaryColor`, `secondaryColor`, `accentColor`, `bgColor`, `textColor`), and custom `domain` — the frontend login page detects the caller's email domain and loads the matching company theme automatically.
+
+**Base URL:** `https://mejoragemeseg-production.up.railway.app`
+
+**Authentication:** Most endpoints require `Authorization: Bearer <jwt_token>`. The `GET /companies/slug/:slug` endpoint is public.
+
+---
+
+### GET /companies
+
+Returns all companies registered in the platform. Company-level admins calling this endpoint will receive only their own company's data; Super Admins receive the full list.
+
+**Authentication:** Required (ADMIN role)
+
+#### Response
+
+<ResponseField name="[].id" type="number">
+  Company ID.
+</ResponseField>
+
+<ResponseField name="[].name" type="string">
+  Company display name.
+</ResponseField>
+
+<ResponseField name="[].slug" type="string">
+  URL-safe identifier (e.g. `"gemeseg"`).
+</ResponseField>
+
+<ResponseField name="[].domain" type="string">
+  Email domain used for automatic theme detection (e.g. `"gemeseg.com"`).
+</ResponseField>
+
+<ResponseField name="[].logoUrl" type="string">
+  Relative path to the logo file served by the API (e.g. `"/uploads/logos/gemeseg.png"`).
+</ResponseField>
+
+<ResponseField name="[].primaryColor" type="string">
+  Primary brand color in hex format (e.g. `"#1e3a5f"`).
+</ResponseField>
+
+<ResponseField name="[].secondaryColor" type="string">
+  Secondary color in hex format.
+</ResponseField>
+
+<ResponseField name="[].accentColor" type="string">
+  Accent color in hex format.
+</ResponseField>
+
+<ResponseField name="[].bgColor" type="string">
+  Background color in hex format.
+</ResponseField>
+
+<ResponseField name="[].textColor" type="string">
+  Default text color in hex format.
+</ResponseField>
+
+<ResponseField name="[].createdAt" type="string">
+  Company registration timestamp.
+</ResponseField>
+
+```bash
+curl https://mejoragemeseg-production.up.railway.app/companies \
+  -H "Authorization: Bearer <jwt_token>"
+```
+
+---
+
+### GET /companies/mine
+
+Returns the company associated with the authenticated user's account. Useful for loading the current user's branding settings in the frontend.
+
+**Authentication:** Required
+
+#### Response
+
+Returns a single company object (same shape as the array items in `GET /companies`) or `null` if the user is a Super Admin without an associated company.
+
+```bash
+curl https://mejoragemeseg-production.up.railway.app/companies/mine \
+  -H "Authorization: Bearer <jwt_token>"
+```
+
+---
+
+### GET /companies/slug/:slug
+
+Looks up a company by its unique slug. This endpoint is **public** and does not require authentication. It is used by the frontend login page to load white-label branding before the user logs in.
+
+**Authentication:** None required
+
+#### Path Parameters
+
+<ParamField path="slug" type="string" required>
+  The company's URL-safe slug (e.g. `"gemeseg"`, `"mikacao"`).
+</ParamField>
+
+#### Response
+
+Returns the company object with branding fields, or `404` if no company with that slug exists.
+
+```bash
+curl https://mejoragemeseg-production.up.railway.app/companies/slug/gemeseg
+```
+
+#### Example Response
+
+```json
+{
+  "id": 1,
+  "name": "Gemeseg S.A.",
+  "slug": "gemeseg",
+  "logoUrl": "/uploads/logos/gemeseg.png",
+  "primaryColor": "#1e3a5f",
+  "secondaryColor": "#d4a017",
+  "accentColor": "#2563eb",
+  "bgColor": "#f8fafc",
+  "textColor": "#1e293b",
+  "domain": "gemeseg.com"
+}
+```
+
+---
+
+### GET /companies/:id
+
+Returns a single company by its numeric ID. Company admins can only retrieve their own company; attempting to access another company's record returns `403 Forbidden`.
+
+**Authentication:** Required (ADMIN role)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Numeric company ID.
+</ParamField>
+
+---
+
+### POST /companies
+
+Creates a new tenant company and its initial Admin user in a single atomic operation. Only Super Admins (users with `companyId: null`) can call this endpoint; Company-level Admins receive `403 Forbidden`.
+
+**Authentication:** Required (Super Admin only)
+
+#### Request Body
+
+<ParamField body="name" type="string" required>
+  Display name of the new company.
+</ParamField>
+
+<ParamField body="slug" type="string" required>
+  Unique URL-safe identifier for the company (lowercase letters, numbers, hyphens).
+</ParamField>
+
+<ParamField body="adminFullName" type="string" required>
+  Full name for the initial Company Admin user.
+</ParamField>
+
+<ParamField body="adminEmail" type="string" required>
+  Email address for the initial Company Admin user.
+</ParamField>
+
+<ParamField body="adminPassword" type="string" required>
+  Password for the initial Company Admin user. Minimum 6 characters.
+</ParamField>
+
+<ParamField body="logoUrl" type="string">
+  Optional initial logo URL path.
+</ParamField>
+
+<ParamField body="primaryColor" type="string">
+  Primary brand color as a 6-digit hex string (e.g. `"#1e3a5f"`).
+</ParamField>
+
+<ParamField body="secondaryColor" type="string">
+  Secondary color as a 6-digit hex string.
+</ParamField>
+
+<ParamField body="accentColor" type="string">
+  Accent color as a 6-digit hex string.
+</ParamField>
+
+<ParamField body="bgColor" type="string">
+  Background color as a 6-digit hex string.
+</ParamField>
+
+<ParamField body="textColor" type="string">
+  Text color as a 6-digit hex string.
+</ParamField>
+
+<ParamField body="domain" type="string">
+  Email domain for automatic branding detection at login (e.g. `"acme.com"`).
+</ParamField>
+
+#### Response
+
+Returns the newly created company object.
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/companies \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Acme Corp",
+    "slug": "acme",
+    "adminFullName": "Ana Torres",
+    "adminEmail": "ana@acme.com",
+    "adminPassword": "s3cur3pass",
+    "primaryColor": "#0f172a",
+    "secondaryColor": "#64748b",
+    "accentColor": "#3b82f6",
+    "bgColor": "#ffffff",
+    "textColor": "#0f172a",
+    "domain": "acme.com"
+  }'
+```
+
+---
+
+### PATCH /companies/:id
+
+Updates branding or metadata fields for a company. Company Admins can only update their own company. All request body fields are optional.
+
+**Authentication:** Required (ADMIN role)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Numeric ID of the company to update.
+</ParamField>
+
+#### Request Body
+
+<ParamField body="name" type="string">
+  Updated display name.
+</ParamField>
+
+<ParamField body="slug" type="string">
+  Updated slug. Must remain unique across all companies.
+</ParamField>
+
+<ParamField body="primaryColor" type="string">
+  Updated primary color (`#RRGGBB` format).
+</ParamField>
+
+<ParamField body="secondaryColor" type="string">
+  Updated secondary color (`#RRGGBB` format).
+</ParamField>
+
+<ParamField body="accentColor" type="string">
+  Updated accent color (`#RRGGBB` format).
+</ParamField>
+
+<ParamField body="bgColor" type="string">
+  Updated background color (`#RRGGBB` format).
+</ParamField>
+
+<ParamField body="textColor" type="string">
+  Updated text color (`#RRGGBB` format).
+</ParamField>
+
+<ParamField body="domain" type="string">
+  Updated email domain for theme auto-detection.
+</ParamField>
+
+#### Response
+
+Returns the updated company object.
+
+```bash
+curl -X PATCH https://mejoragemeseg-production.up.railway.app/companies/1 \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "primaryColor": "#0a2540",
+    "accentColor": "#635bff"
+  }'
+```
+
+---
+
+### DELETE /companies/:id
+
+Permanently deletes a company and all its associated data. This action is irreversible. Only Super Admins can perform deletions; Company-level Admins receive `403 Forbidden`.
+
+**Authentication:** Required (Super Admin only)
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Numeric ID of the company to delete.
+</ParamField>
+
+#### Response
+
+Returns the deleted company object.
+
+---
+
+### POST /companies/:id/logo
+
+Uploads a logo image for the company. The file is stored in `uploads/logos/` on the server and the company's `logoUrl` field is updated automatically. The frontend prepends `VITE_API_URL` to any path beginning with `/uploads/` when rendering the logo.
+
+**Authentication:** Required (ADMIN role). Company Admins can only upload logos for their own company.
+
+**Content-Type:** `multipart/form-data`
+
+**Limits:** Maximum file size is **2 MB**. Allowed formats: `jpg`, `jpeg`, `png`, `gif`, `svg`.
+
+#### Path Parameters
+
+<ParamField path="id" type="number" required>
+  Numeric ID of the company to upload the logo for.
+</ParamField>
+
+#### Form Data
+
+<ParamField body="logo" type="file" required>
+  The image file to upload. Field name must be `logo`.
+</ParamField>
+
+#### Response
+
+<ResponseField name="logoUrl" type="string">
+  Server path of the uploaded logo file (e.g. `"/uploads/logos/acme-1721234567890.png"`).
+</ResponseField>
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/companies/1/logo \
+  -H "Authorization: Bearer <jwt_token>" \
+  -F "logo=@/path/to/logo.png"
+```
+
+#### Example Response
+
+```json
+{
+  "logoUrl": "/uploads/logos/acme-1721234567890.png"
+}
+```

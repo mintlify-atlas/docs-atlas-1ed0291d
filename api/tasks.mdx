@@ -1,0 +1,254 @@
+---
+title: "Tasks API: Update, Detail, and Delete Endpoints"
+sidebarTitle: "Tasks"
+description: "REST endpoints for individual task operations. Update status, priority, assignees, and dates. Tasks are created through the Projects API."
+---
+
+The Tasks API handles read, update, and delete operations on individual task records. Tasks themselves are created via `POST /projects/:id/tasks` — see the [Projects API](/api/projects) for creation. Every task belongs to exactly one project, and access control is enforced through project membership: the caller must be a project member with role `OWNER` or `MEMBER` to modify or delete tasks. `VIEWER` members may read task detail but cannot mutate it. System `ADMIN` users bypass the membership check and can operate on any task within their company.
+
+When updating assignees via `PATCH /tasks/:id`, the full `assigneeIds` array **replaces** the existing assignee list — it is not a delta. Pass an empty array (`[]`) to remove all assignees.
+
+Base URL: `https://mejoragemeseg-production.up.railway.app`
+
+---
+
+### GET /tasks/:id
+
+Returns the full detail of a single task, including its assignees and the parent project summary.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Any authenticated user (project membership not enforced on reads).
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the task to retrieve.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="id" type="integer">
+  Unique task ID.
+</ResponseField>
+
+<ResponseField name="title" type="string">
+  Task title.
+</ResponseField>
+
+<ResponseField name="description" type="string | null">
+  Task description, or `null` if none was provided.
+</ResponseField>
+
+<ResponseField name="status" type="string">
+  Current task status. One of `TODO`, `IN_PROGRESS`, `IN_REVIEW`, `DONE`, `CANCELLED`.
+</ResponseField>
+
+<ResponseField name="priority" type="string">
+  Task priority. One of `LOW`, `MEDIUM`, `HIGH`, `URGENT`.
+</ResponseField>
+
+<ResponseField name="startDate" type="string | null">
+  ISO 8601 start date (stored at noon UTC), or `null`.
+</ResponseField>
+
+<ResponseField name="endDate" type="string | null">
+  ISO 8601 deadline (stored at noon UTC), or `null`.
+</ResponseField>
+
+<ResponseField name="estimatedHours" type="number">
+  Estimated effort in hours.
+</ResponseField>
+
+<ResponseField name="projectId" type="integer">
+  ID of the project this task belongs to.
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp of when the task was created.
+</ResponseField>
+
+<ResponseField name="assignees" type="array">
+  List of users assigned to this task.
+
+  <Expandable title="Assignee object fields">
+    <ResponseField name="user.id" type="integer">Assignee's user ID.</ResponseField>
+    <ResponseField name="user.fullName" type="string">Assignee's full name.</ResponseField>
+    <ResponseField name="user.email" type="string">Assignee's email address.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="project" type="object">
+  Parent project summary.
+
+  <Expandable title="Project summary fields">
+    <ResponseField name="project.id" type="integer">Project ID.</ResponseField>
+    <ResponseField name="project.name" type="string">Project name.</ResponseField>
+  </Expandable>
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X GET https://mejoragemeseg-production.up.railway.app/tasks/201 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{
+  "id": 201,
+  "title": "Design homepage mockup",
+  "description": "Create Figma mockup for the new homepage",
+  "status": "IN_PROGRESS",
+  "priority": "HIGH",
+  "startDate": "2024-04-02T12:00:00.000Z",
+  "endDate": "2024-04-10T12:00:00.000Z",
+  "estimatedHours": 8,
+  "projectId": 10,
+  "createdAt": "2024-04-01T10:00:00.000Z",
+  "assignees": [
+    {
+      "user": {
+        "id": 55,
+        "fullName": "María López",
+        "email": "maria.lopez@gemeseg.com"
+      }
+    }
+  ],
+  "project": {
+    "id": 10,
+    "name": "Website Redesign"
+  }
+}
+```
+
+---
+
+### PATCH /tasks/:id
+
+Partially updates an existing task. All body fields are optional — only the fields you include are changed. When `assigneeIds` is present, it **fully replaces** the current assignee list (pass `[]` to clear all assignees). `VIEWER` project members cannot update tasks. Returns `404 Not Found` if the task does not exist.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Project member with role `OWNER` or `MEMBER`, or system `ADMIN`.
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the task to update.
+</ParamField>
+
+#### Request Body
+
+<ParamField body="title" type="string">
+  Updated task title.
+</ParamField>
+
+<ParamField body="description" type="string">
+  Updated task description.
+</ParamField>
+
+<ParamField body="status" type="string">
+  New task status. Accepted values: `TODO`, `IN_PROGRESS`, `IN_REVIEW`, `DONE`, `CANCELLED`.
+</ParamField>
+
+<ParamField body="priority" type="string">
+  New task priority. Accepted values: `LOW`, `MEDIUM`, `HIGH`, `URGENT`.
+</ParamField>
+
+<ParamField body="assigneeIds" type="integer[]">
+  Complete replacement list of user IDs to assign to this task. Passing this field removes all previous assignees and replaces them with the supplied list. Pass an empty array `[]` to remove all assignees.
+</ParamField>
+
+<ParamField body="startDate" type="string">
+  ISO 8601 date string (e.g. `"2024-04-05"`), or an empty string to clear the start date.
+</ParamField>
+
+<ParamField body="endDate" type="string">
+  ISO 8601 date string, or an empty string to clear the end date.
+</ParamField>
+
+<ParamField body="estimatedHours" type="number">
+  Updated estimated effort in hours.
+</ParamField>
+
+#### Response Fields
+
+Returns the updated task object. Same shape as `GET /tasks/:id` (without the nested `project` field).
+
+<ResponseField name="id" type="integer">Task ID.</ResponseField>
+<ResponseField name="title" type="string">Updated title.</ResponseField>
+<ResponseField name="description" type="string | null">Updated description.</ResponseField>
+<ResponseField name="status" type="string">Updated status.</ResponseField>
+<ResponseField name="priority" type="string">Updated priority.</ResponseField>
+<ResponseField name="startDate" type="string | null">Updated start date.</ResponseField>
+<ResponseField name="endDate" type="string | null">Updated end date.</ResponseField>
+<ResponseField name="estimatedHours" type="number">Updated estimated hours.</ResponseField>
+<ResponseField name="projectId" type="integer">Parent project ID.</ResponseField>
+<ResponseField name="createdAt" type="string">Original creation timestamp (unchanged).</ResponseField>
+<ResponseField name="assignees" type="array">Updated assignee list — `{ user: { id, fullName, email } }` objects.</ResponseField>
+
+#### Example
+
+```bash
+curl -X PATCH https://mejoragemeseg-production.up.railway.app/tasks/201 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "IN_REVIEW",
+    "priority": "URGENT",
+    "assigneeIds": [55, 60],
+    "estimatedHours": 12
+  }'
+```
+
+```json
+{
+  "id": 201,
+  "title": "Design homepage mockup",
+  "description": "Create Figma mockup for the new homepage",
+  "status": "IN_REVIEW",
+  "priority": "URGENT",
+  "startDate": "2024-04-02T12:00:00.000Z",
+  "endDate": "2024-04-10T12:00:00.000Z",
+  "estimatedHours": 12,
+  "projectId": 10,
+  "createdAt": "2024-04-01T10:00:00.000Z",
+  "assignees": [
+    { "user": { "id": 55, "fullName": "María López", "email": "maria.lopez@gemeseg.com" } },
+    { "user": { "id": 60, "fullName": "Carlos Ruiz", "email": "carlos.ruiz@gemeseg.com" } }
+  ]
+}
+```
+
+---
+
+### DELETE /tasks/:id
+
+Permanently deletes a task. Unlike user deletion, this is a **hard delete** — the record is removed from the database. The caller must be an `OWNER` member of the parent project or a system `ADMIN`. `VIEWER` members are blocked with `403 Forbidden`. Returns `404 Not Found` if the task does not exist.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`  
+**Role required:** Project member with role `OWNER` or `MEMBER`, or system `ADMIN`. `VIEWER` role is blocked.
+
+#### Path Parameters
+
+<ParamField path="id" type="integer" required>
+  Numeric ID of the task to delete.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="message" type="string">
+  Confirmation string: `"Tarea eliminada"`.
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X DELETE https://mejoragemeseg-production.up.railway.app/tasks/201 \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+{
+  "message": "Tarea eliminada"
+}
+```

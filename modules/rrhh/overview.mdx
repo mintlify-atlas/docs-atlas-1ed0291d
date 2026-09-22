@@ -1,0 +1,91 @@
+---
+title: "Human Resources Module: Recruitment, Guardias, and Compliance"
+sidebarTitle: "Overview"
+description: "The RRHH module in MejoraGemeseg manages recruitment via Google Drive, guard assignments, document compliance, payroll documents, and training records."
+---
+
+The **Recursos Humanos (RRHH)** module is the operational core of MejoraGemeseg for GEMESEG. It covers the entire lifecycle of a guard — from the moment a candidate applies through a Google Drive folder, through their active assignment to a client entity, all the way to their formal exit and folder archival. Alongside guard management, the module handles document compliance checking, HR document generation from `.docx` templates, training records, and an anonymous complaints inbox. All data is multi-tenant: every record is scoped to a `companyId` and access is controlled by the `RRHH` section permission.
+
+<Note>
+**Naming note:** The module was renamed from "Personal" to "Recursos Humanos (RRHH)" at the UI and routing level. React Router paths use `/rrhh/*`, and the section permission key is `RRHH`. However, the REST API prefix remains `/personal/...` and internal file names (e.g. `backend/src/modules/personal/`, `personal.service.ts`) are unchanged — this is an intentional contract that avoids unnecessary risk across ~35 call sites.
+</Note>
+
+## What the Module Does
+
+RRHH gives the HR team a single place to:
+
+- **Recruit** externally by reading candidate folders from Google Drive and hiring them with one click.
+- **Manage active guards** — personal data, entity assignments, and entry/exit movements tracked against external systems (IsyPlus, IESS, SUT, SICOSEP).
+- **Check document compliance** for every guard against per-entity requirements, with traffic-light indicators and manual email reminders.
+- **Generate HR documents** (contracts, letters) from `.docx` templates stored in Drive, with variables auto-filled from guard records.
+- **Track training records** at the group level with document and evidence attachments.
+- **Process complaints and suggestions** via an anonymous-capable form and a Kanban management board.
+- **Run internal surveys** scoped to users with an account in the platform.
+
+## Sub-Modules
+
+The RRHH module contains nine functional sub-modules, each with its own route and page:
+
+| Sub-module | Route | Page component |
+|---|---|---|
+| Recruitment | `/rrhh/reclutamiento` | `ReclutamientoPage` |
+| Listado de Guardias | `/rrhh/guardias` | `GuardiasList` |
+| Entidades y Requisitos | `/rrhh/entidades` | `EntidadesList` |
+| Cumplimiento | `/rrhh/cumplimiento` | `CumplimientoEntidades` |
+| Historial | `/rrhh/historial` | `HistorialGuardia` |
+| Documentación | `/rrhh/contracts` | `ContractsList` |
+| Capacitaciones | `/rrhh/capacitaciones` | `TrainingsPage` |
+| Buzón de Quejas | `/rrhh/quejas` (send) / `/rrhh/quejas/gestion` (manage) | `ComplaintsPage` / `ComplaintsManagementPage` |
+| Encuestas | `/rrhh/encuestas` (answer) / `/rrhh/encuestas/gestion` (manage) | `SurveysPage` / `SurveyManagementPage` |
+
+<Note>
+The **Dashboard** at `/rrhh` (`PersonalDashboard`) aggregates KPIs from across the module and provides an **"Ayuda"** button that opens `RrhhHelpModal.tsx` with a functional guide for the sub-modules.
+</Note>
+
+## Section Gating and Permissions
+
+All routes under `/rrhh/*` are wrapped with `SectionRoute section="RRHH"`, which calls `SectionPermissionGuard` on the backend. The relevant guards in the permission model:
+
+- **View access (`canView('RRHH')`)**: read-only access to all sub-modules except the Kanban management and survey management pages.
+- **Write access (`canWrite('RRHH')`)**: required to hire candidates, register guard exits, approve/reject documents, generate contracts, and configure verification systems.
+- **Admin role only**: actions that are irreversible or touch raw production data — deleting a Drive employee record, configuring Drive folder roots via API, and merging duplicate cédulas (`CedulaMergeModal`). Note that most RRHH users carry the `EMPLOYEE` role with the `RRHH` section permission, **not** `ADMIN`. The cédula-merge button is intentionally invisible to them.
+
+Two routes have **no** `SectionRoute` guard because any authenticated employee should be able to use them:
+
+- `/rrhh/quejas` — any employee can submit a complaint.
+- `/rrhh/encuestas` — any employee can answer a survey they have been assigned.
+
+## Google Drive as the Source of Truth
+
+Google Drive is the authoritative record for all document storage in the RRHH module. The service account `drive-sync@agentes-504115.iam.gserviceaccount.com` reads and writes Drive on behalf of the backend. Three folder roots are **fixed in code** (`HARDCODED_DRIVE_FOLDERS` in `backend/src/modules/personal/constants/hardcoded-drive-folders.ts`) and cannot be changed from the UI:
+
+- `RECLUTAMIENTO` — candidate folders, one sub-folder per vacancy.
+- `CAPACITACIONES` — training attachments uploaded directly.
+- `VENTAS_CONTRATOS` — sales contract PDFs (shared constant, not editable here).
+
+Three roots remain **user-configurable** via the wrench buttons in the relevant pages:
+
+- `CUMPLIMIENTO` — guard folders structured as `Público|Privado/<Provincia - Entidad>/<Apellidos - Nombres>`.
+- `GUARDIAS_ARCHIVO` — destination for archived guard folders after a completed exit.
+- `PERSONAL_ADMIN` — administrative staff folders structured as `Nombre Apellido - Puesto`.
+
+<Warning>
+Drive folder operations (hiring a candidate, archiving a guard) move real folders. Always use clearly labeled test data when running end-to-end tests, and coordinate with the team before touching the shared production Drive.
+</Warning>
+
+## Sub-Page Navigation
+
+<CardGroup cols={2}>
+  <Card title="Recruitment" icon="user-plus" href="/modules/rrhh/recruitment">
+    Job positions, Drive-synced candidates, AI file analysis, and the hiring flow that moves a candidate folder to Guardias.
+  </Card>
+  <Card title="Guardias" icon="shield" href="/modules/rrhh/guardias">
+    Active guard management — personal data, entity assignments, entry/exit movements, history timeline, and the "Mostrar guardias fuera" toggle.
+  </Card>
+  <Card title="Compliance" icon="check-circle" href="/modules/rrhh/compliance">
+    Traffic-light document compliance per guard and entity, document review and approval, expiry alerts, and administrative staff checklist.
+  </Card>
+  <Card title="Documentation" icon="file-text" href="/modules/rrhh/documentation">
+    DOCX template management with `[VARIABLE]` placeholders, auto-fill from guard records, PDF generation, training records, and the complaints Kanban.
+  </Card>
+</CardGroup>

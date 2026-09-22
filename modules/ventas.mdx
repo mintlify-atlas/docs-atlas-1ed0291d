@@ -1,0 +1,351 @@
+---
+title: "Sales Module: Leads, Visits, Goals, and Contract Generation"
+sidebarTitle: "Ventas"
+description: "Track leads and client visits, set sales goals, manage client records, and generate signed contracts from .docx templates with automatic variable substitution."
+---
+
+The Ventas module provides a complete sales operations layer for GEMESEG — covering the full prospect-to-contract journey. Sales reps log leads and field visits, managers set weekly goals, and the system generates PDF contracts from configurable `.docx` templates stored in Google Drive using `<<VARIABLE>>` placeholder substitution. All data is scoped to the active company and accessible through dedicated frontend pages.
+
+## Leads
+
+`Lead` records track sales prospects from first contact through to won or lost status. Each lead can be assigned to a user and optionally linked to a campaign.
+
+```prisma
+model Lead {
+  id             Int        @id @default(autoincrement())
+  fullName       String
+  email          String?
+  phone          String?
+  companyName    String?
+  source         LeadSource @default(WEB_FORM)
+  status         LeadStatus @default(NEW)
+  assignedUserId Int?
+  campaignName   String?
+  estimatedValue Float?     @default(0)
+  closedValue    Float?     @default(0)
+  notes          String?
+  companyId      Int
+}
+```
+
+### Lead Source Options
+
+| Value | Description |
+|-------|-------------|
+| `GOOGLE_ADS` | Originated from a Google Ads campaign |
+| `WEB_FORM` | Submitted via a web form (default) |
+| `EMAIL` | Inbound email lead |
+| `MANUAL` | Manually entered by a sales rep |
+
+### Lead Status Stages
+
+| Status | Meaning |
+|--------|---------|
+| `NEW` | Just created, not yet contacted |
+| `CONTACTED` | First contact made |
+| `QUALIFIED` | Confirmed interest and budget |
+| `QUOTED` | Proposal sent |
+| `WON` | Deal closed successfully |
+| `LOST` | Prospect did not convert |
+
+## Client Visits
+
+`ClientVisit` records field visits made by sales reps. Visits support GPS check-in coordinates, outcome classification, and quoted amounts.
+
+```prisma
+model ClientVisit {
+  id              Int           @id @default(autoincrement())
+  userId          Int
+  clientName      String
+  clientAddress   String?
+  clientPhone     String?
+  visitDate       DateTime
+  status          VisitStatus   @default(PLANNED)
+  checkInTime     DateTime?
+  checkInLat      Float?
+  checkInLng      Float?
+  isVerified      Boolean       @default(false)
+  commercialOffer String?
+  quotedAmount    Float?        @default(0)
+  outcome         VisitOutcome?
+  notes           String?
+  companyId       Int
+}
+```
+
+### Visit Status
+
+| Status | Description |
+|--------|-------------|
+| `PLANNED` | Scheduled but not yet started (default) |
+| `IN_PROGRESS` | Rep has checked in |
+| `COMPLETED` | Visit finished |
+| `CANCELLED` | Visit was cancelled |
+
+### Visit Outcome
+
+| Outcome | Description |
+|---------|-------------|
+| `INTERESTED` | Client expressed interest |
+| `QUOTED` | Proposal was presented |
+| `CLOSED_SALE` | Sale was closed on-site |
+| `NOT_INTERESTED` | Client declined |
+| `FOLLOW_UP` | Follow-up required |
+
+## Sales Goals
+
+`SalesGoal` lets managers set per-user weekly visit targets. Goals are keyed by `(companyId, userId, year, weekNumber)` and are unique per combination.
+
+```prisma
+model SalesGoal {
+  id              Int  @id @default(autoincrement())
+  userId          Int
+  weeklyVisitGoal Int  @default(20)
+  year            Int
+  weekNumber      Int
+  companyId       Int
+
+  @@unique([companyId, userId, year, weekNumber])
+}
+```
+
+<Tip>
+  The `VentasDashboard` page aggregates goal progress in real time, comparing the current week's completed visits against each rep's `weeklyVisitGoal`.
+</Tip>
+
+## Sales Clients (CRM)
+
+`SalesClient` is the core CRM record for active customers. It stores standard contact fields plus a flexible `extra` JSON map for company-specific attributes defined in `SalesClientField`.
+
+```prisma
+model SalesClient {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  name      String
+  email     String
+  phone     String?
+  ruc       String?
+  address   String?
+  extra     Json     @default("{}")   // populated from SalesClientField definitions
+  createdBy Int
+  contracts SalesContract[]
+}
+```
+
+### Create / Update Client Payload
+
+```typescript
+class CreateSalesClientDto {
+  name: string;
+  email: string;
+  phone?: string;
+  ruc?: string;
+  address?: string;
+  extra?: Record<string, string>;   // values for custom SalesClientField keys
+}
+```
+
+### Custom Client Fields (SalesClientField)
+
+Companies can define additional client attributes without schema changes. Each field has a `key`, `label`, `fieldType`, and display `order`.
+
+```prisma
+model SalesClientField {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  key       String
+  label     String
+  fieldType String   @default("TEXT")
+  isCore    Boolean  @default(false)
+  order     Int      @default(0)
+
+  @@unique([companyId, key])
+}
+```
+
+```typescript
+class CreateSalesClientFieldDto {
+  label: string;
+  key?: string;        // auto-generated from label if omitted
+  fieldType?: string;  // "TEXT" | "NUMBER" | "DATE" | "EMAIL" | etc.
+  order?: number;
+}
+```
+
+## Contract Generation
+
+Contracts are produced by merging field values into a `.docx` template stored in Google Drive, then converting the result to PDF. The entire workflow is managed through the `SalesTemplate` → `SalesField` → `SalesContract` chain.
+
+<Note>
+  The Ventas module uses `<<VARIABLE>>` delimiters for template placeholders. This differs from the HR module, which uses `[VARIABLE]`. Do not mix the two formats.
+</Note>
+
+### SalesTemplate
+
+Each template points to a Google Drive `.docx` file and defines auto-numbering settings for the generated contracts.
+
+```prisma
+model SalesTemplate {
+  id               Int      @id @default(autoincrement())
+  name             String
+  description      String?
+  driveUrl         String?          // Google Drive link to the source .docx
+  docxPath         String?          // Local path after download
+  generatedPdfPath String?
+  emailSubject     String?
+  emailBody        String?
+  numberingPrefix  String?          // e.g. "MEGAMONT"
+  numberingDigits  Int     @default(5)  // zero-padded width, e.g. 5 → 00001
+  numberingNext    Int     @default(1)  // increments on each contract creation
+  driveFolderId    String?
+  companyId        Int
+  fields           SalesField[]
+  contracts        SalesContract[]
+}
+```
+
+### SalesField
+
+Each field in a template corresponds to a `<<VARIABLE>>` placeholder in the `.docx`. Fields can be filled by the seller, pre-populated from `SalesClientField` data, or left for the client to complete.
+
+```prisma
+model SalesField {
+  id              Int      @id @default(autoincrement())
+  templateId      Int
+  variableName    String   // matches <<VariableName>> in the .docx
+  label           String   // visible label in the form
+  fieldType       String   // TEXT | NUMBER | DATE | EMAIL | CHECKBOX
+                           // | DROPDOWN | SIGNATURE | TABLE | CONTRACT_NUMBER
+  isRequired      Boolean  @default(true)
+  isClientField   Boolean  @default(false)  // true = client fills via public link
+  defaultValue    String?
+  dropdownOptions String[]
+  allowMultiple   Boolean  @default(false)
+  allowOther      Boolean  @default(false)
+  tableConfig     Json?    // { columns: [{key, label, type}], maxRows }
+  clientPrompt    String?
+  clientFieldKey  String?  // maps to a SalesClientField key or core field
+  order           Int      @default(0)
+}
+```
+
+### SalesContract
+
+Each generated contract is tracked with its field values, client details, document status, and optional SignWell e-signature integration.
+
+```prisma
+model SalesContract {
+  id                 Int      @id @default(autoincrement())
+  templateId         Int
+  contractNumber     String?  // e.g. "MEGAMONT-00001" (null if no numbering prefix)
+  clientName         String
+  clientEmail        String
+  clientPhone        String?
+  clientCompany      String?
+  clientRuc          String?
+  clientAddress      String?
+  fieldValues        Json     // { variableName: value }
+  annexA             Json?    // Equipment items
+  annexB             Json?    // Services
+  annexC             Json?    // Emergency contacts
+  generatedPdfPath   String?
+  signwellDocumentId String?
+  signwellStatus     String?
+  status             String   @default("DRAFT")
+  // DRAFT | GENERATING | READY | SENT | SIGNED | CANCELLED
+  clientFillToken    String?  @unique  // public link token for client-side field completion
+  sentAt             DateTime?
+  signedAt           DateTime?
+}
+```
+
+### Contract Document History
+
+`SalesContractDocument` records each version of a contract file for audit purposes.
+
+```prisma
+model SalesContractDocument {
+  id         Int      @id @default(autoincrement())
+  contractId Int
+  type       String   // GENERADO | ENVIADO | FIRMADO
+  filePath   String   // "/api/ventas/contratos/file/{fileName}"
+  createdAt  DateTime @default(now())
+}
+```
+
+### Create Contract Payload
+
+```typescript
+class CreateContractDto {
+  templateId: number;
+  clientName: string;
+  clientEmail: string;
+  clientPhone?: string;
+  clientCompany?: string;
+  clientRuc?: string;
+  clientAddress?: string;
+  fieldValues?: Record<string, any>;  // { variableName: value }
+  salesClientId?: number;             // link to existing SalesClient
+  annexA?: AnnexAItemDto[];
+  annexB?: AnnexBDto;
+  annexC?: AnnexCItemDto[];
+}
+```
+
+#### Annex Types
+
+| Annex | Purpose | Key Fields |
+|-------|---------|-----------|
+| **Annex A** | Equipment inventory | `descripcion`, `marcaModelo`, `serie`, `valorReferencial` |
+| **Annex B** | Service configuration | `monitoreoAlarma`, `videoMonitoreo`, `monitoreoVehicular`, `respuestaFisica`, `tablaServicios[]` |
+| **Annex C** | Emergency contacts | `nombre`, `relacion`, `telefono`, `prioridad` |
+
+## Webhooks and API Keys
+
+### WebhookConfig
+
+Companies can configure outbound webhook endpoints to receive events from the Ventas module (e.g., lead status changes, contract signed notifications). Webhooks are authenticated using per-company `SalesApiKey` tokens.
+
+### SalesApiKey
+
+```prisma
+model SalesApiKey {
+  id        Int      @id @default(autoincrement())
+  name      String
+  apiKey    String   @unique
+  isActive  Boolean  @default(true)
+  companyId Int
+  createdAt DateTime @default(now())
+}
+```
+
+<Note>
+  API keys are scoped per company. Pass the key in the `Authorization` header when sending webhook payloads to external endpoints. Deactivate a key (`isActive: false`) to revoke access without deleting the record.
+</Note>
+
+## Frontend Pages
+
+| Page | Description |
+|------|-------------|
+| `VentasDashboard` | Overview of weekly goal progress, visit counts, and lead funnel summary |
+| `LeadsPage` | Full lead list with stage filtering, assignment, and estimated value tracking |
+| `VisitasPage` | Visit log with check-in status, GPS verification badge, and outcome tags |
+| `VentasClientesPage` | CRM client list with custom field support and contract quick-access |
+| `TemplateList` | Manage `.docx` templates, configure fields, and set numbering prefix/digits |
+| `ContratosList` | All generated contracts with status badges (DRAFT → SIGNED), PDF preview, and resend options |
+| `VentasReportes` | Analytics page — visit counts by rep, lead conversion rates, revenue by period |
+
+### Key Source Files
+
+```
+backend/src/modules/ventas/dto/client.dto.ts        # SalesClient create/update + SalesClientField
+backend/src/modules/ventas/dto/template.dto.ts      # Template, Field, Contract create/update + Annexes
+
+frontend/src/pages/ventas/VentasDashboard.tsx
+frontend/src/pages/ventas/LeadsPage.tsx
+frontend/src/pages/ventas/VisitasPage.tsx
+frontend/src/pages/ventas/VentasClientesPage.tsx
+frontend/src/pages/ventas/TemplateList.tsx
+frontend/src/pages/ventas/ContratosList.tsx
+frontend/src/pages/ventas/VentasReportes.tsx
+```

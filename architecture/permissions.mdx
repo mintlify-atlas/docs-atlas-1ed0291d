@@ -1,0 +1,219 @@
+---
+title: "Role-Based Access Control and Section Permissions"
+sidebarTitle: "Permissions"
+description: "MejoraGemeseg uses JWT roles (ADMIN, MANAGER, EMPLOYEE) combined with section-level permissions (CompanySection, UserPermission) to gate access."
+---
+
+MejoraGemeseg has two complementary permission layers. The first is a classic **role-based access control (RBAC)** system built on JWT claims: every authenticated request carries a `role` field that guards use to allow or deny access to individual endpoints. The second is a **section-permission system** that controls which modules of the application a user can see and whether they can read or write within each module.
+
+## Global roles (`UserRole`)
+
+Three roles are defined as a Prisma enum:
+
+```prisma
+enum UserRole {
+  ADMIN
+  MANAGER
+  EMPLOYEE
+}
+```
+
+The role is stored on the `User` model, embedded in the JWT payload at login, and checked by the `RolesGuard` on every protected endpoint:
+
+```typescript
+// JWT payload
+{ "sub": 42, "email": "hugo@gemeseg.com", "role": "MANAGER", "companyId": 1 }
+```
+
+| Role | Typical capabilities |
+|------|----------------------|
+| `ADMIN` | Full CRUD for users, projects, companies, agents, tools. Access to the admin panel. |
+| `MANAGER` | Can create and manage projects. Assigned as a project MANAGER or MEMBER. |
+| `EMPLOYEE` | Read access to projects they are a member of. Limited write operations. |
+
+### `RolesGuard` and `@Roles()` decorator
+
+The `RolesGuard` reads a metadata key set by the `@Roles()` decorator and compares the required roles against `req.user.role` (populated by the JWT strategy):
+
+```typescript
+// src/common/decorators/roles.decorator.ts
+export const Roles = (...roles: UserRole[]) => SetMetadata(ROLES_KEY, roles);
+
+// src/common/guards/roles.guard.ts
+@Injectable()
+export class RolesGuard implements CanActivate {
+  constructor(private reflector: Reflector) {}
+
+  canActivate(context: ExecutionContext): boolean {
+    const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
+      ROLES_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    if (!requiredRoles || requiredRoles.length === 0) return true;
+    const { user } = context.switchToHttp().getRequest();
+    return requiredRoles.includes(user.role);
+  }
+}
+```
+
+Example usage in a controller:
+
+```typescript
+@UseGuards(AuthGuard('jwt'), RolesGuard)
+@Roles(UserRole.ADMIN)
+@Post()
+create(@Body() dto: CreateUserDto) { ... }
+```
+
+## Project-level roles (`MemberRole`)
+
+Within a project, membership is tracked by the `ProjectMember` model which carries its own role:
+
+```prisma
+enum MemberRole {
+  OWNER
+  MEMBER
+  VIEWER
+}
+```
+
+| Role | Permissions within a project |
+|------|------------------------------|
+| `OWNER` | Add/remove members, change member roles, edit project settings, delete project. |
+| `MEMBER` | Create and update tasks, update their own task assignments. |
+| `VIEWER` | Read-only access. All action buttons are visible but disabled in the UI. |
+
+<Note>
+  A global `ADMIN` is automatically added as `OWNER` to every new project, regardless of who created it. This ensures that admins can always manage all projects within their company.
+</Note>
+
+## Section permissions
+
+The section-permission layer sits on top of RBAC and answers a different question: *"Is this section of the application enabled for the user's company, and does this specific user have read and/or write access to it?"*
+
+### `CompanySection` — module enablement
+
+The `CompanySection` table records which sections are active for a company:
+
+```prisma
+model CompanySection {
+  id        Int      @id @default(autoincrement())
+  companyId Int
+  section   String   // e.g. "CACAO", "VENTAS", "PERSONAL"
+  createdAt DateTime @default(now())
+
+  @@unique([companyId, section])
+}
+```
+
+If a row for `(companyId=1, section="CACAO")` does not exist, no user in company 1 can access the cacao module, regardless of their role.
+
+### `UserPermission` — per-user, per-section access
+
+Within an enabled section, access can be further restricted per user:
+
+```prisma
+model UserPermission {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  section   String
+  canView   Boolean  @default(true)
+  canWrite  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, section])
+}
+```
+
+The semantics mirror the `usePermissions` hook on the frontend:
+
+1. **Super Admin** (`companyId: null`) — always passes, no checks performed.
+2. **Section not in `CompanySection`** — denied (`403`).
+3. **`UserPermission` row exists** — `canView` / `canWrite` is enforced exactly.
+4. **No `UserPermission` row** — access is **permitted** (the default is permissive). This means users without explicit records can still access all enabled sections.
+
+### `SectionPermissionGuard` (backend)
+
+The backend enforces section permissions through `SectionPermissionGuard`, applied via the `@Section()` decorator:
+
+```typescript
+// Applied to a controller or handler
+@UseGuards(AuthGuard('jwt'), SectionPermissionGuard)
+@Section('CACAO', 'write')
+@Post('receptions')
+createReception(@Body() dto: CreateReceptionDto) { ... }
+```
+
+The guard calls `PermissionsService` to check both `CompanySection` and `UserPermission` before allowing the request through. The full decision tree:
+
+```
+request arrives
+  └─ is Super Admin (companyId null)?  → allow
+  └─ section enabled for company?      → no → 403
+  └─ UserPermission row exists?
+       └─ yes → enforce canView / canWrite
+       └─ no  → allow (default permissive)
+```
+
+## Frontend enforcement
+
+### `SectionRoute` component
+
+Every protected page in `App.tsx` is wrapped in `SectionRoute`, which calls `usePerm().canView(section)` and redirects to `/dashboard` if the check fails:
+
+```tsx
+// App.tsx
+function SectionRoute({ section, children }: { section: string; children: React.ReactNode }) {
+  const { canView, loading } = usePerm();
+  if (loading) return <LoadingFallback />;
+  if (!canView(section)) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
+// Usage
+<SectionRoute section="CACAO">
+  <CacaoDashboard />
+</SectionRoute>
+```
+
+### `usePermissions()` hook
+
+The `usePermissions` hook (aliased as `usePerm()` via `PermissionsContext`) fetches permissions from `GET /api/permissions/me` on mount and re-evaluates on every route change. It exposes:
+
+```typescript
+const { isSuperAdmin, sections, permissions, canView, canWrite, loading } = usePerm();
+```
+
+- `isSuperAdmin` — `true` if the current user is the Super Admin; `canView` and `canWrite` always return `true` for super admins.
+- `sections` — array of section keys enabled for the user's company.
+- `permissions` — record keyed by section with `{ canView, canWrite }` values from `UserPermission` rows.
+- `canView(section)` — combines company section enablement with the user's `UserPermission.canView`.
+- `canWrite(section)` — combines company section enablement with the user's `UserPermission.canWrite`.
+
+Components use `canWrite` to conditionally render action buttons:
+
+```tsx
+const { canWrite } = usePerm();
+
+<button disabled={!canWrite('CACAO')}>
+  Nueva Recepción
+</button>
+```
+
+## Auth module summary
+
+| Concern | Implementation |
+|---------|----------------|
+| Login | `POST /api/auth/login` → returns JWT |
+| JWT expiry | 7 days |
+| JWT payload | `{ sub, email, role, companyId }` |
+| Password hashing | bcryptjs, salt 10 |
+| Registration | `POST /api/auth/register` — restricted to `@gemeseg.com` domain by a domain guard |
+| Route protection | `AuthGuard('jwt')` on all non-public endpoints |
+| Role enforcement | `RolesGuard` + `@Roles()` decorator |
+| Section enforcement | `SectionPermissionGuard` + `@Section()` decorator |
+| User ID convention | Use `req.user.userId` (not `req.user.sub`) within service methods |
+
+<Warning>
+  The `companyId` value in the JWT is trusted by the backend for all data-isolation filters. If a user's company association changes after login, they must log out and log back in to receive an updated token.
+</Warning>

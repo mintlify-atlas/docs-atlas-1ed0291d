@@ -1,0 +1,183 @@
+---
+title: "Deploy MejoraGemeseg to Railway, Vercel, and Supabase"
+sidebarTitle: "Deployment"
+description: "Deploy the NestJS backend to Railway, the React frontend to Vercel, and use Supabase as the managed PostgreSQL database."
+---
+
+MejoraGemeseg uses a three-service production architecture: the NestJS backend runs on **Railway**, the React frontend is deployed to **Vercel**, and **Supabase** provides the managed PostgreSQL 17 database. Everything lives in a single GitHub repository — a push to `main` triggers both Railway and Vercel to deploy automatically.
+
+## Deployment architecture
+
+```
+GitHub (repo: MejoraGemeseg/)
+  ├── backend/   → Railway          (Root Dir: /backend)
+  ├── frontend/  → Vercel           (Root Dir: /frontend)
+  └── .env       → NOT committed, managed via platform dashboards
+```
+
+| Service | Provider | Production URL |
+|---------|----------|----------------|
+| Database | Supabase | [supabase.com](https://supabase.com) |
+| Backend | Railway | `https://mejoragemeseg-production.up.railway.app` |
+| Frontend | Vercel | `https://mejora-gemeseg.vercel.app` |
+
+---
+
+## 1. Set up the database on Supabase
+
+<Steps>
+
+### Create a Supabase project
+
+Log in to [supabase.com](https://supabase.com), create a new project, and choose the **us-east-1** region (where the existing pooler URL is configured).
+
+### Apply the schema
+
+In the Supabase dashboard go to **SQL Editor** and run the full contents of `scripts/supabase-schema.sql` from the repository. This creates all tables, enums, indexes, and foreign keys required by Prisma.
+
+### Copy the connection string
+
+From **Project Settings → Database → Connection pooling**, copy the **Transaction pooler** URL. It looks like:
+
+```
+postgresql://postgres.<project-ref>@aws-0-us-east-1.pooler.supabase.com:6543/postgres
+```
+
+You will paste this as `DATABASE_URL` in Railway.
+
+</Steps>
+
+---
+
+## 2. Deploy the backend to Railway
+
+<Steps>
+
+### Connect the repository
+
+In Railway, create a new project, select **Deploy from GitHub repo**, and choose the `MejoraGemeseg` repository. Set the **Root Directory** to `/backend`.
+
+### Set environment variables
+
+In the Railway service's **Variables** tab, add the following:
+
+| Key | Value |
+|-----|-------|
+| `DATABASE_URL` | Supabase Transaction Pooler URL (from step above) |
+| `JWT_SECRET` | A long random string — generate with `openssl rand -hex 32` |
+| `FRONTEND_URL` | `https://mejora-gemeseg.vercel.app` |
+| `PORT` | `3000` |
+| `GITHUB_TOKEN` | *(optional)* Your GitHub personal access token for `gpt-4o-mini` via GitHub Models |
+
+<Note>
+  `GITHUB_TOKEN` is only required to enable the AI Chat assistant. Without it the module falls back to predefined mock responses, and all other platform features work normally.
+</Note>
+
+### Confirm the Dockerfile build
+
+Railway detects `backend/Dockerfile` and performs a multi-stage build. The container listens on `PORT=3000`. Railway's health check path is `/health` which returns `{"status":"ok","timestamp":"..."}`.
+
+</Steps>
+
+---
+
+## 3. Deploy the frontend to Vercel
+
+<Steps>
+
+### Import the project
+
+In Vercel, click **Add New Project**, import the `MejoraGemeseg` repository, and set the **Root Directory** to `frontend`.
+
+### Set the environment variable
+
+| Key | Value |
+|-----|-------|
+| `VITE_API_URL` | `https://mejoragemeseg-production.up.railway.app` |
+
+Vercel injects this at build time; Vite embeds it into the static bundle as `import.meta.env.VITE_API_URL`.
+
+### Deploy
+
+Click **Deploy**. Vercel runs `npm run build` inside `frontend/`, producing a static SPA. `frontend/vercel.json` configures the SPA fallback so that client-side routes like `/projects/123` are correctly served.
+
+</Steps>
+
+---
+
+## Automatic deploy flow
+
+Once both services are connected to GitHub, the standard workflow is:
+
+1. Push commits to `main` on GitHub.
+2. **Railway** detects changes in `/backend` and redeploys the NestJS container automatically.
+3. **Vercel** detects changes in `/frontend` and rebuilds the static bundle automatically.
+4. No manual steps required after the initial setup.
+
+<Warning>
+  Do not use `.env` files in production. Railway and Vercel each have their own secrets management dashboards. The `.env` file is listed in `.gitignore` and must never be committed.
+</Warning>
+
+---
+
+## Docker for local development
+
+For local development, `docker-compose.yml` provides a complete environment including PostgreSQL and Redis:
+
+```yaml
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: gemeseg
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/gemeseg?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PORT: 3000
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    command: sh -c "npx prisma generate && npx prisma db push && npm run start:dev"
+```
+
+Start with:
+
+```bash
+docker compose up -d db redis
+```
+
+Then run the backend with `npm run start:dev` directly (outside Docker) for hot-reload during development.
+
+---
+
+## Google Cloud Build (alternative CI/CD)
+
+The repository also includes `cloudbuild.yaml` for teams using Google Cloud. That pipeline:
+
+1. Builds and pushes the backend Docker image to Artifact Registry (`us-central1-docker.pkg.dev/$PROJECT_ID/gemeseg-repo/mejora-gemeseg-backend`).
+2. Deploys to **Cloud Run** (`mejora-gemeseg-backend`, region `us-central1`, 512 MB / 1 CPU, 0–10 instances).
+3. Builds the frontend with `VITE_API_URL` pointing to the Cloud Run URL.
+4. Deploys the frontend to **Firebase Hosting** (`mejora-gemeseg` project).
+
+Secrets (`DATABASE_URL`, `JWT_SECRET`, `FRONTEND_URL`, `SIGNWELL_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON`) are injected from Google Secret Manager via `--set-secrets`.
+
+<Note>
+  The Railway + Vercel + Supabase stack is the current primary production setup. The Cloud Build pipeline exists as an alternative path for GCP-managed deployments.
+</Note>

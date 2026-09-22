@@ -1,0 +1,174 @@
+---
+title: "MejoraGemeseg Architecture: NestJS, React, and PostgreSQL"
+sidebarTitle: "Overview"
+description: "Explore the monorepo structure, NestJS module layout, React frontend organization, and the data flow between services."
+---
+
+MejoraGemeseg is a **monorepo** containing a NestJS backend and a React frontend that are deployed independently but share a single Git history. The backend exposes a REST API consumed exclusively by the frontend; there is no GraphQL layer or separate microservice. All persistent state lives in a single PostgreSQL 17 database accessed through Prisma ORM.
+
+## Repository layout
+
+```
+MejoraGemeseg/
+├── backend/                        # NestJS application
+│   ├── Dockerfile                  # Multi-stage build for Railway / Cloud Run
+│   ├── railway.json                # Railway deploy configuration
+│   ├── prisma/
+│   │   ├── schema.prisma           # Full data model
+│   │   ├── seed.js                 # Test users, companies, and projects
+│   │   └── migrations/             # Prisma migration history
+│   └── src/
+│       ├── main.ts                 # Bootstrap: CORS, Swagger, global pipes, Helmet
+│       ├── app.module.ts           # Root module — imports all feature modules
+│       ├── common/
+│       │   ├── decorators/         # @Roles(), @Section() decorators
+│       │   ├── guards/             # RolesGuard, SectionPermissionGuard
+│       │   └── filters/            # AllExceptionsFilter (global)
+│       ├── modules/
+│       │   ├── auth/               # Login, register, JWT strategy
+│       │   ├── users/              # User CRUD (admin) + profile
+│       │   ├── projects/           # Projects, members, tasks
+│       │   ├── tasks/              # Individual task CRUD
+│       │   ├── tools/              # Software inventory + assignments
+│       │   ├── agents/             # AI agent catalog + user assignments
+│       │   ├── ai/                 # Chat with GitHub Models (gpt-4o-mini)
+│       │   ├── companies/          # Multi-tenant company management
+│       │   ├── permissions/        # CompanySection + UserPermission queries
+│       │   ├── cacao/              # Cacao inventory (Mikacao S.A.)
+│       │   ├── custodias/          # Custody assignment and logistics
+│       │   ├── personal/           # HR: personnel records, compliance, recruitment
+│       │   ├── ventas/             # Sales: leads, visits, contracts, clients
+│       │   ├── sistemas/           # Sistemas module (Drive config, etc.)
+│       │   ├── cache/              # Redis cache wrapper (CacheModule)
+│       │   └── queue/              # Background queue (QueueModule + ScheduleModule)
+│       └── prisma/                 # PrismaService (singleton Prisma client)
+├── frontend/                       # React + Vite SPA
+│   ├── vercel.json                 # SPA fallback rewrite rules
+│   ├── vite.config.ts              # Vite build configuration
+│   └── src/
+│       ├── App.tsx                 # Router, SectionRoute, PermissionsProvider
+│       ├── components/
+│       │   ├── chat/               # ChatDrawer, ChatFloatingButton
+│       │   ├── layout/             # Sidebar (collapsible 64 px / 240 px), Navbar
+│       │   ├── ProtectedRoute.tsx  # Redirect to /login if no JWT
+│       │   └── ui/                 # Shared UI primitives
+│       ├── pages/                  # Route-level page components (mirrors modules/)
+│       ├── contexts/               # PermissionsContext, SidebarContext
+│       ├── hooks/                  # usePermissions(), usePerm()
+│       ├── services/               # Axios API calls (one file per backend module)
+│       ├── stores/                 # Lightweight state stores
+│       ├── types/                  # TypeScript interface declarations
+│       └── styles.css              # Global CSS with GEMESEG corporate palette
+├── scripts/
+│   └── supabase-schema.sql         # Full schema SQL for Supabase SQL Editor
+├── docker-compose.yml              # PostgreSQL 16-alpine + Redis 7-alpine
+├── docker-compose.dev.yml          # Dev overrides (bind-mount volumes)
+├── cloudbuild.yaml                 # Optional Google Cloud Build CI/CD pipeline
+├── .env.example                    # Environment variable template
+└── README.md
+```
+
+## NestJS backend
+
+The `AppModule` imports every feature module explicitly. There are no dynamic module registrations at runtime:
+
+```typescript
+// src/app.module.ts
+@Module({
+  imports: [
+    ScheduleModule.forRoot(),
+    CacheModule,
+    AuthModule,
+    UsersModule,
+    ProjectsModule,
+    TasksModule,
+    AiModule,
+    QueueModule,
+    ToolsModule,
+    AgentsModule,
+    CompaniesModule,
+    CacaoModule,
+    PermissionsModule,
+    CustodiasModule,
+    PersonalModule,
+    VentasModule,
+    SistemasModule,
+  ],
+})
+export class AppModule {}
+```
+
+### Bootstrap configuration (`main.ts`)
+
+Key settings applied at application startup:
+
+- **Global API prefix:** all routes under `/api` (except `/health`, `/docs`, `/docs/*`)
+- **Helmet:** enabled with `contentSecurityPolicy: false` and `crossOriginResourcePolicy: cross-origin`
+- **CORS:** allows `FRONTEND_URL`, `https://app.gemeseg.com`, `https://mejora-gemeseg.web.app`, `https://mejora-gemeseg.firebaseapp.com`, Firebase preview channels (`mejora-gemeseg--<channel>-<hash>.web.app`), and all `http://localhost:*` in non-production environments
+- **Global `ValidationPipe`:** `whitelist: true`, `forbidNonWhitelisted: true`, `transform: true`
+- **Swagger:** mounted at `/docs`, title *"GEMESEG Admin API"*, version `1.0`
+- **Static assets:** `public/` directory served at root (used for logo uploads via `uploads/logos/`)
+- **Port:** reads `process.env.PORT`, defaults to `8080`
+
+### PrismaService
+
+`PrismaService` (in `src/prisma/`) is a singleton `@Injectable()` that extends `PrismaClient`. Every feature module injects it to query the database. Prisma is configured with `@prisma/adapter-pg` and targets `debian-openssl-3.0.x` and `linux-musl-openssl-3.0.x` binary targets for Railway and Cloud Run compatibility.
+
+## React frontend
+
+The frontend is a single-page application built with Vite. Routing is handled by `react-router-dom`; all route protection is done through two wrappers:
+
+- **`ProtectedRoute`** — redirects to `/login` if no JWT is present in `localStorage`.
+- **`SectionRoute`** — calls `usePerm().canView(section)` and redirects to `/dashboard` if the current user's company does not have the section enabled or if their `UserPermission` denies view access.
+
+Axios is configured with a request interceptor that automatically attaches `Authorization: Bearer <token>` from `localStorage` to every outgoing request.
+
+## Infrastructure diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Browser (SPA)                            │
+│                   React 18 + Vite (Vercel)                      │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │ HTTPS  /api/*
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                    NestJS Backend (Railway)                       │
+│                                                                   │
+│  AuthModule → JWT + bcrypt                                        │
+│  ProjectsModule → tasks, members                                  │
+│  PersonalModule → HR records, compliance, recruitment             │
+│  VentasModule → leads, contracts (SignWell), clients              │
+│  CacaoModule → suppliers, lots, settlements                       │
+│  CustodiasModule → custody assignments + PDFKit                   │
+│  AiModule → GitHub Models gpt-4o-mini + rate limiting            │
+│  CompaniesModule → tenants, white-labeling                        │
+│  PermissionsModule → CompanySection + UserPermission              │
+│  CacheModule → Redis (optional)                                   │
+│  QueueModule → ScheduleModule background jobs                     │
+└──────────────────────────┬───────────────────────────────────────┘
+                           │ Prisma ORM (TCP)
+                           ▼
+┌──────────────────────────────────────────────────────────────────┐
+│              PostgreSQL 17 (Supabase — us-east-1)                 │
+│  Connection: Transaction Pooler (port 6543)                       │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Key dependencies
+
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@nestjs/core` | v11 | Backend framework |
+| `@prisma/client` | v7 | Database ORM |
+| `@nestjs/passport` + `passport-jwt` | — | JWT authentication |
+| `bcryptjs` | — | Password hashing (salt 10) |
+| `class-validator` + `class-transformer` | — | Request body validation and transformation |
+| `@nestjs/swagger` | — | Auto-generated OpenAPI docs at `/docs` |
+| `helmet` | — | HTTP security headers |
+| `pdfkit` | — | PDF generation for custodias |
+| `react` | v18 | Frontend UI |
+| `vite` | — | Frontend build tool |
+| `react-router-dom` | — | Client-side routing |
+| `axios` | — | HTTP client with JWT interceptor |
+| `zod` | — | Frontend form and response validation |

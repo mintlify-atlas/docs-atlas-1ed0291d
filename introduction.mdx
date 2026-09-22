@@ -1,0 +1,77 @@
+---
+title: "MejoraGemeseg: Internal Operations Platform for GEMESEG"
+sidebarTitle: "Introduction"
+description: "MejoraGemeseg is a multi-tenant web platform centralizing projects, HR, custodias, cacao inventory, and sales operations for GEMESEG and affiliated companies."
+---
+
+MejoraGemeseg is the internal digital workspace for **GEMESEG (Ecuador)** and its affiliated companies — including **Mikacao S.A.** Each company operates in a fully isolated tenant, with its own branding, users, and data, all managed through a single monorepo deployment. The platform is built for desktop web use and follows a Scrum methodology with 1–2 week sprints.
+
+## What the platform covers
+
+MejoraGemeseg consolidates the day-to-day operations that previously lived in spreadsheets, email threads, and disconnected tools. The following modules are available in production:
+
+| Module | Description |
+|--------|-------------|
+| **Projects / Kanban** | Create projects, manage members with roles (OWNER, MEMBER, VIEWER), and track tasks across a 4-column Kanban board (Por hacer → En progreso → En revisión → Completado). |
+| **HR / RRHH** | Personnel records, certifications, document reviews, movement tracking, and compliance checklists for field staff. |
+| **Custodias** | Assignment and logistics tracking for custody operations (Hacienda, Puerto, VIP types). |
+| **Cacao** | Cacao supplier and client management, lot receptions, settlements, and payables for Mikacao S.A. |
+| **Sales / Ventas** | Leads, client visits, sales contracts (with SignWell e-signature integration), and sales goals. |
+| **AI Chat** | A floating chat drawer powered by GitHub Models (`gpt-4o-mini`) with per-agent conversation history, a 50-message/day rate limit, and context-aware responses based on the current page. |
+| **Tool Inventory** | Software tool catalog with user assignments, license keys, version tracking, and an audit log. |
+| **Admin Panel** | User CRUD, project health statistics, and company management — restricted to ADMIN role. |
+
+## Technology stack
+
+| Layer | Technology |
+|-------|------------|
+| Backend | NestJS v11 + TypeScript |
+| ORM | Prisma v7 (`@prisma/adapter-pg`) |
+| Database | PostgreSQL 17 |
+| Authentication | Passport.js (JWT, 7-day expiry) + bcryptjs (salt 10) |
+| Frontend | React 18 + Vite + TypeScript |
+| HTTP client | Axios (with JWT interceptor) |
+| Validation | class-validator + class-transformer (backend), Zod (frontend) |
+| PDF generation | PDFKit (custodias: order sheets, payroll, payment roles) |
+| AI | GitHub Models (`gpt-4o-mini`) |
+| Styles | Custom CSS with GEMESEG corporate palette |
+| Deploy | Railway (backend) + Vercel (frontend) + Supabase (DB) |
+
+## Production URLs
+
+| Service | URL |
+|---------|-----|
+| Frontend | [https://mejora-gemeseg.vercel.app](https://mejora-gemeseg.vercel.app) |
+| Backend API | [https://mejoragemeseg-production.up.railway.app](https://mejoragemeseg-production.up.railway.app) |
+| Swagger / API Docs | [https://mejoragemeseg-production.up.railway.app/docs](https://mejoragemeseg-production.up.railway.app/docs) |
+
+## Corporate identity
+
+The platform's default theme reflects GEMESEG's corporate palette, which is also the baseline for new company tenants:
+
+| Name | Hex |
+|------|-----|
+| Dark blue | `#100F31` |
+| Light blue | `#12375F` |
+| Orange (accent) | `#EE3B1B` |
+| Light grey | `#E6E6E6` |
+
+## Explore the documentation
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="bolt" href="/quickstart">
+    Run the full stack locally — backend, frontend, and seed data — in under 10 minutes.
+  </Card>
+  <Card title="Deployment" icon="cloud" href="/deployment">
+    Deploy to Railway, Vercel, and Supabase with automatic CI/CD on every push to `main`.
+  </Card>
+  <Card title="Architecture Overview" icon="diagram-project" href="/architecture/overview">
+    Explore the monorepo layout, NestJS module structure, and data flow between services.
+  </Card>
+  <Card title="Multi-Tenancy" icon="building" href="/architecture/multi-tenancy">
+    Understand how `companyId` isolation, Super Admin access, and white-labeling work.
+  </Card>
+  <Card title="Permissions" icon="shield-check" href="/architecture/permissions">
+    Learn how JWT roles, `RolesGuard`, `CompanySection`, and `UserPermission` control access.
+  </Card>
+</CardGroup>

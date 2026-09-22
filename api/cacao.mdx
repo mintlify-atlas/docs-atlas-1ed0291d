@@ -1,0 +1,866 @@
+---
+title: "Cacao Inventory API: Receptions, Settlements, and Shipments"
+sidebarTitle: "Cacao"
+description: "REST endpoints for the Mikacao cacao supply chain: suppliers, receptions, lots, quality adjustments, settlements, price fixings, and shipments."
+---
+
+The Cacao module models the complete supply chain for **Mikacao S.A.** — from raw material reception at farm gates through internal inventory lots, settlement of supplier payables, price fixings, outbound shipments, and dual-sided accounts (payables and receivables). The Kardex always stores quantities in kilograms regardless of the unit of measure used at reception or shipment. All amounts are stored with up to 4 decimal places via the internal `round4()` helper.
+
+**Base URL:** `https://mejoragemeseg-production.up.railway.app`
+
+**Authentication:** All endpoints require `Authorization: Bearer <jwt_token>`.
+
+**ID Formats:**
+- Settlements: `LIQ-XXXX` (e.g. `LIQ-0001`)
+- Shipments: `EMB-XXXX` (e.g. `EMB-0001`)
+- Lots: `LOTE-YYYY-00001` (e.g. `LOTE-2024-00001`)
+
+---
+
+## Suppliers
+
+Cacao suppliers are the farms and producers that deliver raw cacao to Mikacao.
+
+### GET /cacao/suppliers
+
+Returns all registered suppliers.
+
+**Authentication:** Required
+
+#### Response
+
+<ResponseField name="[].id" type="number">
+  Supplier ID.
+</ResponseField>
+
+<ResponseField name="[].name" type="string">
+  Legal or trade name of the supplier.
+</ResponseField>
+
+<ResponseField name="[].contact" type="string">
+  Contact person name.
+</ResponseField>
+
+<ResponseField name="[].phone" type="string">
+  Phone number.
+</ResponseField>
+
+<ResponseField name="[].paymentTerms" type="string">
+  Payment conditions agreed with this supplier (e.g. `"30 días"`).
+</ResponseField>
+
+<ResponseField name="[].bank" type="string">
+  Bank name for payment transfers.
+</ResponseField>
+
+---
+
+### POST /cacao/suppliers
+
+Creates a new supplier record.
+
+**Authentication:** Required
+
+#### Request Body
+
+<ParamField body="name" type="string" required>
+  Supplier's legal or trade name.
+</ParamField>
+
+<ParamField body="contact" type="string">
+  Contact person name.
+</ParamField>
+
+<ParamField body="phone" type="string">
+  Contact phone number.
+</ParamField>
+
+<ParamField body="paymentTerms" type="string">
+  Payment terms, e.g. `"Contado"`, `"30 días"`.
+</ParamField>
+
+<ParamField body="bank" type="string">
+  Name of the supplier's bank for wire transfers.
+</ParamField>
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/cacao/suppliers \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Finca San Jacinto",
+    "contact": "Luis Vera",
+    "phone": "0991234567",
+    "paymentTerms": "Contado",
+    "bank": "Banco Pichincha"
+  }'
+```
+
+---
+
+### GET /cacao/suppliers/:id
+
+Returns a single supplier by ID.
+
+**Authentication:** Required
+
+<ParamField path="id" type="number" required>
+  Supplier ID.
+</ParamField>
+
+---
+
+### PATCH /cacao/suppliers/:id
+
+Updates supplier fields. All body fields are optional.
+
+**Authentication:** Required
+
+<ParamField path="id" type="number" required>
+  Supplier ID.
+</ParamField>
+
+---
+
+### DELETE /cacao/suppliers/:id
+
+Deletes a supplier record.
+
+**Authentication:** Required
+
+<ParamField path="id" type="number" required>
+  Supplier ID.
+</ParamField>
+
+---
+
+## Clients
+
+Buyers and exporters that receive shipments from Mikacao.
+
+### GET /cacao/clients
+
+Returns all registered clients.
+
+**Authentication:** Required
+
+#### Response
+
+<ResponseField name="[].id" type="number">
+  Client ID.
+</ResponseField>
+
+<ResponseField name="[].name" type="string">
+  Client company name.
+</ResponseField>
+
+<ResponseField name="[].country" type="string">
+  Client's country.
+</ResponseField>
+
+<ResponseField name="[].contact" type="string">
+  Contact person name.
+</ResponseField>
+
+<ResponseField name="[].email" type="string">
+  Contact email address.
+</ResponseField>
+
+<ResponseField name="[].phone" type="string">
+  Contact phone number.
+</ResponseField>
+
+---
+
+### POST /cacao/clients
+
+Creates a new client.
+
+**Authentication:** Required
+
+#### Request Body
+
+<ParamField body="name" type="string" required>
+  Client company name.
+</ParamField>
+
+<ParamField body="country" type="string">
+  Client's country of operation.
+</ParamField>
+
+<ParamField body="contact" type="string">
+  Contact person name.
+</ParamField>
+
+<ParamField body="email" type="string">
+  Contact email address.
+</ParamField>
+
+<ParamField body="phone" type="string">
+  Contact phone number.
+</ParamField>
+
+---
+
+### GET /cacao/clients/:id
+
+Returns a single client by ID.
+
+<ParamField path="id" type="number" required>Client ID.</ParamField>
+
+---
+
+### PATCH /cacao/clients/:id
+
+Updates client fields.
+
+<ParamField path="id" type="number" required>Client ID.</ParamField>
+
+---
+
+### DELETE /cacao/clients/:id
+
+Deletes a client record.
+
+<ParamField path="id" type="number" required>Client ID.</ParamField>
+
+---
+
+## Qualities
+
+Quality grades define discount rules applied during reception to adjust the net weight of received cacao.
+
+### GET /cacao/qualities
+
+Returns all quality/discount rule configurations.
+
+**Authentication:** Required
+
+---
+
+### POST /cacao/qualities
+
+Creates a new quality rule.
+
+**Authentication:** Required
+
+---
+
+### PATCH /cacao/qualities/:id
+
+Updates a quality rule.
+
+<ParamField path="id" type="number" required>Quality ID.</ParamField>
+
+---
+
+### DELETE /cacao/qualities/:id
+
+Deletes a quality rule.
+
+<ParamField path="id" type="number" required>Quality ID.</ParamField>
+
+---
+
+## Receptions
+
+A reception records the arrival of cacao from a supplier. Creating a reception automatically creates or updates an inventory lot.
+
+### POST /cacao/receptions
+
+Records a new cacao reception. Gross weight, tare, humidity, and impurities are all used to calculate net weight. A lot (`LOTE-YYYY-NNNNN`) is created automatically if no `lotId` is supplied.
+
+**Authentication:** Required
+
+#### Request Body
+
+<ParamField body="date" type="string (ISO 8601)" required>
+  Reception date (e.g. `"2024-07-10"`).
+</ParamField>
+
+<ParamField body="supplierId" type="number" required>
+  ID of the delivering supplier.
+</ParamField>
+
+<ParamField body="guideNumber" type="string" required>
+  Transport guide or receipt number.
+</ParamField>
+
+<ParamField body="unitOfMeasure" type="string">
+  Unit of measure for the reception. Supported: `TON`, `KG`, `SACO`. Defaults to `KG`. The Kardex always stores in kg.
+</ParamField>
+
+<ParamField body="grossWeight" type="number" required>
+  Gross weight in the specified unit of measure.
+</ParamField>
+
+<ParamField body="tare" type="number" required>
+  Tare (packaging/container weight) in the specified unit.
+</ParamField>
+
+<ParamField body="humidity" type="number" required>
+  Humidity percentage to deduct (e.g. `7.5` for 7.5%).
+</ParamField>
+
+<ParamField body="impurities" type="number" required>
+  Impurities percentage to deduct.
+</ParamField>
+
+<ParamField body="provisionalPrice" type="number">
+  Provisional price per kg in USD.
+</ParamField>
+
+<ParamField body="differential" type="number">
+  Price differential (positive or negative) applied on top of the reference price.
+</ParamField>
+
+<ParamField body="qualityId" type="number">
+  ID of the quality rule to apply for additional discounts.
+</ParamField>
+
+<ParamField body="lotId" type="number">
+  ID of an existing lot to append this reception to. If omitted, a new lot is created.
+</ParamField>
+
+#### Response
+
+Returns the created reception record with computed `netWeight` in kg and the associated `lot` object.
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/cacao/receptions \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "date": "2024-07-10",
+    "supplierId": 1,
+    "guideNumber": "GR-2024-0055",
+    "unitOfMeasure": "SACO",
+    "grossWeight": 50,
+    "tare": 1.5,
+    "humidity": 7.5,
+    "impurities": 1.0,
+    "provisionalPrice": 3.20,
+    "differential": -0.05
+  }'
+```
+
+---
+
+### GET /cacao/receptions
+
+Returns all reception records, ordered by date descending.
+
+**Authentication:** Required
+
+---
+
+### GET /cacao/receptions/:id
+
+Returns a single reception with its associated lot and supplier.
+
+<ParamField path="id" type="number" required>Reception ID.</ParamField>
+
+---
+
+### PATCH /cacao/receptions/:id
+
+Updates a reception record. All body fields are optional.
+
+<ParamField path="id" type="number" required>Reception ID.</ParamField>
+
+---
+
+### DELETE /cacao/receptions/:id
+
+Deletes a reception record. The associated lot's weight is recalculated accordingly.
+
+<ParamField path="id" type="number" required>Reception ID.</ParamField>
+
+---
+
+## Lots
+
+Lots aggregate one or more receptions into a single trackable inventory unit.
+
+### GET /cacao/lots
+
+Returns all lots with their current available weight (in kg) and status.
+
+**Authentication:** Required
+
+#### Response
+
+<ResponseField name="[].id" type="number">Lot ID.</ResponseField>
+
+<ResponseField name="[].lotCode" type="string">
+  Human-readable lot code in format `LOTE-YYYY-NNNNN`.
+</ResponseField>
+
+<ResponseField name="[].totalWeightKg" type="number">
+  Total weight in kg received into this lot.
+</ResponseField>
+
+<ResponseField name="[].availableWeightKg" type="number">
+  Remaining weight available (not yet settled or shipped), in kg.
+</ResponseField>
+
+<ResponseField name="[].supplier" type="object">
+  Nested supplier reference with `id` and `name`.
+</ResponseField>
+
+<ResponseField name="[].receptions" type="array">
+  Array of reception records that make up this lot.
+</ResponseField>
+
+---
+
+### GET /cacao/lots/:id
+
+Returns full details of a single lot including all receptions, settlements, and shipment allocations.
+
+<ParamField path="id" type="number" required>Lot ID.</ParamField>
+
+---
+
+## Settlements
+
+Settlements record the final payment obligation to a supplier for one or more lots. Each settlement is assigned a sequential `LIQ-XXXX` code.
+
+### POST /cacao/settlements
+
+Creates a new settlement. A corresponding Payable record is automatically generated.
+
+**Authentication:** Required
+
+#### Request Body
+
+<ParamField body="date" type="string (ISO 8601)" required>
+  Settlement date.
+</ParamField>
+
+<ParamField body="supplierId" type="number" required>
+  ID of the supplier being settled with.
+</ParamField>
+
+<ParamField body="periodStart" type="string (ISO 8601)" required>
+  Start of the period covered by this settlement.
+</ParamField>
+
+<ParamField body="periodEnd" type="string (ISO 8601)" required>
+  End of the period covered by this settlement.
+</ParamField>
+
+<ParamField body="totalNetWeight" type="number" required>
+  Total net weight (kg) across all included receptions.
+</ParamField>
+
+<ParamField body="totalDeductions" type="number" required>
+  Total deduction amount in USD.
+</ParamField>
+
+<ParamField body="finalPrice" type="number" required>
+  Final agreed price per kg in USD.
+</ParamField>
+
+<ParamField body="totalAmount" type="number" required>
+  Total settlement amount in USD (`totalNetWeight × finalPrice − totalDeductions`).
+</ParamField>
+
+<ParamField body="lots" type="array">
+  Optional array of lot allocations. Each element is `{ lotId: number, quantity: number, unitCost: number }`.
+</ParamField>
+
+#### Response
+
+Returns the created settlement with its `LIQ-XXXX` code and the linked payable record.
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/cacao/settlements \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "date": "2024-07-31",
+    "supplierId": 1,
+    "periodStart": "2024-07-01",
+    "periodEnd": "2024-07-31",
+    "totalNetWeight": 4500.0,
+    "totalDeductions": 120.50,
+    "finalPrice": 3.25,
+    "totalAmount": 14504.50,
+    "lots": [
+      { "lotId": 5, "quantity": 4500.0, "unitCost": 3.25 }
+    ]
+  }'
+```
+
+---
+
+### GET /cacao/settlements
+
+Returns all settlement records ordered by date descending.
+
+**Authentication:** Required
+
+---
+
+### GET /cacao/settlements/:id
+
+Returns full detail of a single settlement by its `LIQ-XXXX` code or numeric ID.
+
+<ParamField path="id" type="string" required>
+  Settlement identifier. Accepts `LIQ-XXXX` format or numeric ID.
+</ParamField>
+
+---
+
+### DELETE /cacao/settlements/:id
+
+Deletes a settlement and its linked payable record.
+
+<ParamField path="id" type="string" required>Settlement identifier.</ParamField>
+
+---
+
+## Price Fixings
+
+Price fixings transition a lot's price from **provisional** to **definitive**. Once a fixing is applied, the final cost price for the lot is locked.
+
+### POST /cacao/price-fixings
+
+Creates a new price fixing for a lot.
+
+**Authentication:** Required
+
+#### Request Body
+
+<ParamField body="lotId" type="number" required>
+  ID of the lot whose price is being fixed.
+</ParamField>
+
+<ParamField body="referencePrice" type="number" required>
+  Reference market price per kg in USD (e.g. ICE futures price).
+</ParamField>
+
+<ParamField body="differential" type="number" required>
+  Differential to add or subtract from the reference price.
+</ParamField>
+
+<ParamField body="fixedPrice" type="number" required>
+  Final computed price per kg (`referencePrice + differential`).
+</ParamField>
+
+<ParamField body="deadline" type="string (ISO 8601)">
+  Optional expiry date for provisional fixings.
+</ParamField>
+
+#### Response
+
+Returns the created price fixing record with `status: "PROVISIONAL"`.
+
+---
+
+### GET /cacao/price-fixings
+
+Returns all price fixing records.
+
+**Authentication:** Required
+
+---
+
+### PATCH /cacao/price-fixings/:id
+
+Updates a price fixing record — typically used to confirm a provisional fixing as definitive, or to adjust prices before confirmation.
+
+**Authentication:** Required
+
+<ParamField path="id" type="number" required>Price fixing ID.</ParamField>
+
+---
+
+## Shipments
+
+Shipments record exports or deliveries to clients. Each shipment is assigned a sequential `EMB-XXXX` code and automatically creates a Receivable.
+
+### POST /cacao/shipments
+
+Creates a new shipment. A corresponding Receivable record is automatically generated.
+
+**Authentication:** Required
+
+#### Request Body
+
+<ParamField body="date" type="string (ISO 8601)" required>
+  Shipment date.
+</ParamField>
+
+<ParamField body="clientId" type="number" required>
+  ID of the client receiving the shipment.
+</ParamField>
+
+<ParamField body="contractRef" type="string" required>
+  Contract or purchase order reference number.
+</ParamField>
+
+<ParamField body="unitOfMeasure" type="string">
+  Unit of measure for the shipment (e.g. `SACO`, `TON`). Defaults to `SACO`.
+</ParamField>
+
+<ParamField body="totalWeight" type="number" required>
+  Total shipment weight in the specified unit.
+</ParamField>
+
+<ParamField body="totalCost" type="number" required>
+  Total cost of goods in USD.
+</ParamField>
+
+<ParamField body="salePrice" type="number" required>
+  Sale price per kg in USD.
+</ParamField>
+
+<ParamField body="margin" type="number" required>
+  Gross margin in USD (`saleRevenue − totalCost`).
+</ParamField>
+
+<ParamField body="lots" type="array">
+  Optional array of lot allocations. Each element: `{ lotId: number, quantity: number, unitCost: number, saleAmount: number }`.
+</ParamField>
+
+#### Response
+
+Returns the created shipment with its `EMB-XXXX` code and the auto-created receivable record.
+
+```bash
+curl -X POST https://mejoragemeseg-production.up.railway.app/cacao/shipments \
+  -H "Authorization: Bearer <jwt_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "date": "2024-08-05",
+    "clientId": 2,
+    "contractRef": "CT-2024-007",
+    "unitOfMeasure": "SACO",
+    "totalWeight": 200,
+    "totalCost": 57600.00,
+    "salePrice": 3.60,
+    "margin": 5400.00,
+    "lots": [
+      { "lotId": 5, "quantity": 200, "unitCost": 3.20, "saleAmount": 63000.00 }
+    ]
+  }'
+```
+
+---
+
+### GET /cacao/shipments
+
+Returns all shipment records.
+
+**Authentication:** Required
+
+---
+
+### GET /cacao/shipments/:id
+
+Returns full detail of a single shipment by its `EMB-XXXX` code or numeric ID.
+
+<ParamField path="id" type="string" required>
+  Shipment identifier. Accepts `EMB-XXXX` format or numeric ID.
+</ParamField>
+
+---
+
+### DELETE /cacao/shipments/:id
+
+Deletes a shipment and its linked receivable.
+
+<ParamField path="id" type="string" required>Shipment identifier.</ParamField>
+
+---
+
+## Payables
+
+Payables are auto-created when a settlement is recorded. They track what Mikacao owes to suppliers.
+
+### GET /cacao/payables
+
+Returns all payable records with their current payment status.
+
+**Authentication:** Required
+
+#### Response
+
+<ResponseField name="[].id" type="number">Payable ID.</ResponseField>
+
+<ResponseField name="[].settlementId" type="string">
+  Linked settlement code (`LIQ-XXXX`).
+</ResponseField>
+
+<ResponseField name="[].supplierId" type="number">Supplier ID.</ResponseField>
+
+<ResponseField name="[].amount" type="number">Total amount owed in USD.</ResponseField>
+
+<ResponseField name="[].amountPaid" type="number">Amount already paid in USD.</ResponseField>
+
+<ResponseField name="[].balance" type="number">Remaining balance in USD.</ResponseField>
+
+<ResponseField name="[].status" type="string">
+  `PENDING` | `PARTIAL` | `PAID`.
+</ResponseField>
+
+<ResponseField name="[].dueDate" type="string">Due date (ISO 8601).</ResponseField>
+
+---
+
+### PATCH /cacao/payables/:id
+
+Records a payment against an existing payable. Updates `amountPaid`, `balance`, and `status` automatically.
+
+**Authentication:** Required
+
+<ParamField path="id" type="number" required>Payable ID.</ParamField>
+
+---
+
+## Receivables
+
+Receivables are auto-created when a shipment is recorded. They track what clients owe to Mikacao.
+
+### GET /cacao/receivables
+
+Returns all receivable records with their current collection status.
+
+**Authentication:** Required
+
+#### Response
+
+<ResponseField name="[].id" type="number">Receivable ID.</ResponseField>
+
+<ResponseField name="[].shipmentId" type="string">
+  Linked shipment code (`EMB-XXXX`).
+</ResponseField>
+
+<ResponseField name="[].clientId" type="number">Client ID.</ResponseField>
+
+<ResponseField name="[].amount" type="number">Total amount invoiced in USD.</ResponseField>
+
+<ResponseField name="[].amountReceived" type="number">Amount already collected in USD.</ResponseField>
+
+<ResponseField name="[].balance" type="number">Remaining balance to collect.</ResponseField>
+
+<ResponseField name="[].status" type="string">
+  `PENDING` | `PARTIAL` | `COLLECTED`.
+</ResponseField>
+
+---
+
+### PATCH /cacao/receivables/:id
+
+Records a collection against an existing receivable.
+
+**Authentication:** Required
+
+<ParamField path="id" type="number" required>Receivable ID.</ParamField>
+
+---
+
+## Kardex
+
+The Kardex is the master inventory ledger. Every reception adds stock and every shipment removes stock. All quantities are always stored and returned in **kilograms**.
+
+### GET /cacao/kardex
+
+Returns all Kardex entries in chronological order.
+
+**Authentication:** Required
+
+#### Response
+
+<ResponseField name="[].id" type="number">Entry ID.</ResponseField>
+
+<ResponseField name="[].date" type="string">Entry date (ISO 8601).</ResponseField>
+
+<ResponseField name="[].type" type="string">
+  Movement type: `IN` (reception) or `OUT` (shipment).
+</ResponseField>
+
+<ResponseField name="[].lotId" type="number">Associated lot ID.</ResponseField>
+
+<ResponseField name="[].lotCode" type="string">Lot code (e.g. `LOTE-2024-00001`).</ResponseField>
+
+<ResponseField name="[].quantityKg" type="number">Movement quantity in kg.</ResponseField>
+
+<ResponseField name="[].balanceKg" type="number">Running balance in kg after this entry.</ResponseField>
+
+<ResponseField name="[].unitCost" type="number">Cost per kg at time of movement.</ResponseField>
+
+<ResponseField name="[].totalCost" type="number">Total cost for this movement.</ResponseField>
+
+---
+
+## Unit Config
+
+Configures the default sack weights used to convert between `SACO` and `KG` across the system.
+
+### GET /cacao/unit-config
+
+Returns the current unit configuration.
+
+**Authentication:** Required
+
+#### Response
+
+<ResponseField name="sacoMichoacan" type="number">
+  Weight of a Michoacán sack in kg (default: `90`).
+</ResponseField>
+
+<ResponseField name="sacoEstandar" type="number">
+  Weight of a standard sack in kg (default: `69`).
+</ResponseField>
+
+<ResponseField name="sacoPersonalizado" type="number">
+  Weight of a custom sack in kg (default: `62`).
+</ResponseField>
+
+---
+
+### PATCH /cacao/unit-config
+
+Updates one or more sack weight values.
+
+**Authentication:** Required
+
+---
+
+## Dashboard
+
+### GET /cacao/dashboard
+
+Returns an aggregate overview of the cacao operation: inventory on hand, pending settlements, pending shipments, outstanding payables, and outstanding receivables.
+
+**Authentication:** Required
+
+#### Response
+
+<ResponseField name="inventoryKg" type="number">
+  Current total inventory in kg across all lots.
+</ResponseField>
+
+<ResponseField name="pendingSettlements" type="number">
+  Number of settlements with unpaid balance.
+</ResponseField>
+
+<ResponseField name="pendingShipments" type="number">
+  Number of shipments with uncollected balance.
+</ResponseField>
+
+<ResponseField name="totalPayableUsd" type="number">
+  Total outstanding payables balance in USD.
+</ResponseField>
+
+<ResponseField name="totalReceivableUsd" type="number">
+  Total outstanding receivables balance in USD.
+</ResponseField>
+
+```bash
+curl https://mejoragemeseg-production.up.railway.app/cacao/dashboard \
+  -H "Authorization: Bearer <jwt_token>"
+```
