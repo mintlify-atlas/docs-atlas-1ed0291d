@@ -1,7 +1,7 @@
 ---
 title: "Sales Module: Leads, Visits, Goals, and Contract Generation"
 sidebarTitle: "Ventas"
-description: "Track leads and client visits, set sales goals, manage client records, and generate signed contracts from .docx templates with automatic variable substitution."
+description: "Track leads and client visits, set sales goals, manage CRM records, and generate signed contracts from .docx templates with variable substitution."
 ---
 
 The Ventas module provides a complete sales operations layer for GEMESEG — covering the full prospect-to-contract journey. Sales reps log leads and field visits, managers set weekly goals, and the system generates PDF contracts from configurable `.docx` templates stored in Google Drive using `<<VARIABLE>>` placeholder substitution. All data is scoped to the active company and accessible through dedicated frontend pages.
@@ -297,14 +297,10 @@ class CreateContractDto {
 | Annex | Purpose | Key Fields |
 |-------|---------|-----------|
 | **Annex A** | Equipment inventory | `descripcion`, `marcaModelo`, `serie`, `valorReferencial` |
-| **Annex B** | Service configuration | `monitoreoAlarma`, `videoMonitoreo`, `monitoreoVehicular`, `respuestaFisica`, `tablaServicios[]` |
+| **Annex B** | Service configuration | `monitoreoAlarma`, `videoMonitoreo`, `monitoreoVehicular`, `respuestaFisica`, `mantenimiento`, `otrosServicios`, `tablaServicios[]` |
 | **Annex C** | Emergency contacts | `nombre`, `relacion`, `telefono`, `prioridad` |
 
-## Webhooks and API Keys
-
-### WebhookConfig
-
-Companies can configure outbound webhook endpoints to receive events from the Ventas module (e.g., lead status changes, contract signed notifications). Webhooks are authenticated using per-company `SalesApiKey` tokens.
+## API Keys
 
 ### SalesApiKey
 
@@ -320,7 +316,7 @@ model SalesApiKey {
 ```
 
 <Note>
-  API keys are scoped per company. Pass the key in the `Authorization` header when sending webhook payloads to external endpoints. Deactivate a key (`isActive: false`) to revoke access without deleting the record.
+  API keys are scoped per company. Deactivate a key (`isActive: false`) to revoke access without deleting the record.
 </Note>
 
 ## Frontend Pages

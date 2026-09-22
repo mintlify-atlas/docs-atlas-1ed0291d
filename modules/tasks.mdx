@@ -1,7 +1,7 @@
 ---
-title: "Task Tracking and Kanban Board in MejoraGemeseg"
+title: "Task Tracking: Kanban Board, Priorities, and Assignees"
 sidebarTitle: "Tasks"
-description: "Manage tasks through four Kanban columns, assign multiple users, set priority, and track start/end dates within a project."
+description: "Create and update project tasks across four Kanban columns, assign multiple members, set priority levels, and filter your personal task queue by status."
 ---
 
 Tasks are the atomic unit of work within a project in MejoraGemeseg. Each task lives on a project's Kanban board, belongs to one of four workflow columns, can be assigned to one or more team members simultaneously, and carries optional scheduling and effort-estimation metadata. Any project member who is not a `VIEWER` can create and update tasks; `VIEWER` members see the full board but have all action buttons disabled rather than hidden.
@@ -69,7 +69,7 @@ The following fields are stored on every `Task` record. All fields except `title
 
 <Steps>
   <Step title="Verify membership">
-    Only project members with role `OWNER`, `MANAGER`, or `MEMBER` may create tasks. `VIEWER` members see the board but the **New Task** button is disabled.
+    Only project members with role `OWNER` or `MEMBER` may create tasks. `VIEWER` members see the board but the **New Task** button is disabled.
   </Step>
   <Step title="POST to the project task endpoint">
     Send a `POST` request to `/projects/:id/tasks` where `:id` is the project's numeric ID.
@@ -146,6 +146,22 @@ Each assigned user sees the task appear in their personal task view, and the tas
 
 ---
 
+## Personal task queue
+
+Authenticated users can retrieve only the tasks assigned to them across all projects using the `my-tasks` endpoint.
+
+```http title="GET /tasks/my-tasks — query parameters"
+GET /tasks/my-tasks?status=IN_PROGRESS&assignedToMe=true&projectId=5
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `status` | `TaskStatus` | Filter by a specific task status value. |
+| `assignedToMe` | `boolean` | Pass `true` to return only tasks directly assigned to the authenticated user. |
+| `projectId` | `integer` | Restrict results to a single project. |
+
+---
+
 ## Viewer restriction
 
 Members with the `VIEWER` role have unrestricted **read access** to the entire project board:
@@ -164,6 +180,7 @@ This explicit disabled state (rather than hidden controls) signals to viewers wh
 |---|---|---|---|
 | `POST` | `/projects/:id/tasks` | Non-`VIEWER` project members | Create a new task in the project. |
 | `GET` | `/projects/:id/tasks` | Project members | List all tasks for the project (Kanban board data). |
+| `GET` | `/tasks/my-tasks` | Any authenticated user | List tasks assigned to the authenticated user, with optional filters. |
 | `GET` | `/tasks/:id` | Project members | Retrieve a single task with full details and assignee list. |
 | `PATCH` | `/tasks/:id` | Non-`VIEWER` project members | Partially update any task field(s). |
 | `DELETE` | `/tasks/:id` | `OWNER` or `ADMIN` | Permanently delete a task. |

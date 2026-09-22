@@ -277,6 +277,34 @@ curl -X GET https://mejoragemeseg-production.up.railway.app/users/me \
 
 ---
 
+### PATCH /users/me/active-agent
+
+Sets or clears the active AI agent for the authenticated user. The chosen agent becomes the default when the user opens the AI assistant without explicitly selecting one.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`
+**Role required:** Any authenticated user.
+
+#### Request Body
+
+<ParamField body="agentId" type="integer | null" required>
+  ID of the agent to set as the user's active agent, or `null` to clear the active agent.
+</ParamField>
+
+#### Response Fields
+
+Returns the updated user object (same shape as `GET /users/me`).
+
+#### Example
+
+```bash
+curl -X PATCH https://mejoragemeseg-production.up.railway.app/users/me/active-agent \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." \
+  -H "Content-Type: application/json" \
+  -d '{ "agentId": 3 }'
+```
+
+---
+
 ### GET /users/stats
 
 Returns aggregate statistics for all users within the authenticated admin's company: total count, active vs. inactive breakdown, and a per-role distribution.

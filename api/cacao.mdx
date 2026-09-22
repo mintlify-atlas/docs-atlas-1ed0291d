@@ -23,9 +23,9 @@ Cacao suppliers are the farms and producers that deliver raw cacao to Mikacao.
 
 ### GET /cacao/suppliers
 
-Returns all registered suppliers.
+Returns all registered suppliers for the caller's company.
 
-**Authentication:** Required
+**Authentication:** Required (CACAO section `view` permission)
 
 #### Response
 
@@ -59,7 +59,7 @@ Returns all registered suppliers.
 
 Creates a new supplier record.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 #### Request Body
 
@@ -98,23 +98,11 @@ curl -X POST https://mejoragemeseg-production.up.railway.app/cacao/suppliers \
 
 ---
 
-### GET /cacao/suppliers/:id
-
-Returns a single supplier by ID.
-
-**Authentication:** Required
-
-<ParamField path="id" type="number" required>
-  Supplier ID.
-</ParamField>
-
----
-
 ### PATCH /cacao/suppliers/:id
 
 Updates supplier fields. All body fields are optional.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 <ParamField path="id" type="number" required>
   Supplier ID.
@@ -124,9 +112,9 @@ Updates supplier fields. All body fields are optional.
 
 ### DELETE /cacao/suppliers/:id
 
-Deletes a supplier record.
+Permanently deletes a supplier record.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 <ParamField path="id" type="number" required>
   Supplier ID.
@@ -140,9 +128,9 @@ Buyers and exporters that receive shipments from Mikacao.
 
 ### GET /cacao/clients
 
-Returns all registered clients.
+Returns all registered clients for the caller's company.
 
-**Authentication:** Required
+**Authentication:** Required (CACAO section `view` permission)
 
 #### Response
 
@@ -176,7 +164,7 @@ Returns all registered clients.
 
 Creates a new client.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 #### Request Body
 
@@ -202,17 +190,11 @@ Creates a new client.
 
 ---
 
-### GET /cacao/clients/:id
-
-Returns a single client by ID.
-
-<ParamField path="id" type="number" required>Client ID.</ParamField>
-
----
-
 ### PATCH /cacao/clients/:id
 
-Updates client fields.
+Updates client fields. All body fields are optional.
+
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 <ParamField path="id" type="number" required>Client ID.</ParamField>
 
@@ -220,7 +202,9 @@ Updates client fields.
 
 ### DELETE /cacao/clients/:id
 
-Deletes a client record.
+Permanently deletes a client record.
+
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 <ParamField path="id" type="number" required>Client ID.</ParamField>
 
@@ -234,7 +218,7 @@ Quality grades define discount rules applied during reception to adjust the net 
 
 Returns all quality/discount rule configurations.
 
-**Authentication:** Required
+**Authentication:** Required (CACAO section `view` permission)
 
 ---
 
@@ -242,13 +226,33 @@ Returns all quality/discount rule configurations.
 
 Creates a new quality rule.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
+
+#### Request Body
+
+<ParamField body="name" type="string" required>
+  Quality grade name (e.g. `"ASE Fino"`, `"CCN-51"`).
+</ParamField>
+
+<ParamField body="humidityDiscount" type="number">
+  Percentage discount applied for humidity above the baseline.
+</ParamField>
+
+<ParamField body="impurityDiscount" type="number">
+  Percentage discount applied for impurities above the baseline.
+</ParamField>
+
+<ParamField body="isFixedPrice" type="boolean">
+  When `true`, a fixed price is applied rather than the provisional market price.
+</ParamField>
 
 ---
 
 ### PATCH /cacao/qualities/:id
 
-Updates a quality rule.
+Updates a quality rule. All body fields are optional.
+
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 <ParamField path="id" type="number" required>Quality ID.</ParamField>
 
@@ -256,7 +260,9 @@ Updates a quality rule.
 
 ### DELETE /cacao/qualities/:id
 
-Deletes a quality rule.
+Permanently deletes a quality rule.
+
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 <ParamField path="id" type="number" required>Quality ID.</ParamField>
 
@@ -270,7 +276,7 @@ A reception records the arrival of cacao from a supplier. Creating a reception a
 
 Records a new cacao reception. Gross weight, tare, humidity, and impurities are all used to calculate net weight. A lot (`LOTE-YYYY-NNNNN`) is created automatically if no `lotId` is supplied.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 #### Request Body
 
@@ -348,33 +354,44 @@ curl -X POST https://mejoragemeseg-production.up.railway.app/cacao/receptions \
 
 ### GET /cacao/receptions
 
-Returns all reception records, ordered by date descending.
+Returns all reception records for the caller's company, ordered by date descending. All query parameters are optional.
 
-**Authentication:** Required
+**Authentication:** Required (CACAO section `view` permission)
 
----
+#### Query Parameters
 
-### GET /cacao/receptions/:id
+<ParamField query="supplierId" type="string">
+  Filter receptions by supplier ID.
+</ParamField>
 
-Returns a single reception with its associated lot and supplier.
+<ParamField query="from" type="string (ISO 8601)">
+  Return only receptions on or after this date.
+</ParamField>
 
-<ParamField path="id" type="number" required>Reception ID.</ParamField>
-
----
-
-### PATCH /cacao/receptions/:id
-
-Updates a reception record. All body fields are optional.
-
-<ParamField path="id" type="number" required>Reception ID.</ParamField>
+<ParamField query="to" type="string (ISO 8601)">
+  Return only receptions on or before this date.
+</ParamField>
 
 ---
 
-### DELETE /cacao/receptions/:id
+### GET /cacao/receptions/qualities
 
-Deletes a reception record. The associated lot's weight is recalculated accordingly.
+Returns all quality/discount rule configurations. This is a convenience alias exposed via the receptions router.
 
-<ParamField path="id" type="number" required>Reception ID.</ParamField>
+**Authentication:** Required (CACAO section `view` permission)
+
+#### Response
+
+<ResponseField name="[].id" type="number">Quality ID.</ResponseField>
+<ResponseField name="[].name" type="string">Quality grade name.</ResponseField>
+<ResponseField name="[].humidityDiscount" type="number">Humidity discount percentage.</ResponseField>
+<ResponseField name="[].impurityDiscount" type="number">Impurity discount percentage.</ResponseField>
+<ResponseField name="[].isFixedPrice" type="boolean">Whether a fixed price applies.</ResponseField>
+
+```bash
+curl https://mejoragemeseg-production.up.railway.app/cacao/receptions/qualities \
+  -H "Authorization: Bearer <jwt_token>"
+```
 
 ---
 
@@ -384,9 +401,23 @@ Lots aggregate one or more receptions into a single trackable inventory unit.
 
 ### GET /cacao/lots
 
-Returns all lots with their current available weight (in kg) and status.
+Returns all lots for the caller's company with their current available weight (in kg) and status. All query parameters are optional.
 
-**Authentication:** Required
+**Authentication:** Required (CACAO section `view` permission)
+
+#### Query Parameters
+
+<ParamField query="status" type="string">
+  Filter by lot status (e.g. `OPEN`, `SETTLED`, `SHIPPED`).
+</ParamField>
+
+<ParamField query="qualityId" type="string">
+  Filter lots by quality ID.
+</ParamField>
+
+<ParamField query="supplierId" type="string">
+  Filter lots by supplier ID.
+</ParamField>
 
 #### Response
 
@@ -414,9 +445,30 @@ Returns all lots with their current available weight (in kg) and status.
 
 ---
 
+### GET /cacao/lots/next-code
+
+Returns the next sequential lot code (`LOTE-YYYY-NNNNN`) that would be assigned to a new reception for the caller's company. Useful for pre-populating forms before submission.
+
+**Authentication:** Required (CACAO section `view` permission)
+
+#### Response
+
+<ResponseField name="nextCode" type="string">
+  The next available lot code (e.g. `"LOTE-2024-00012"`).
+</ResponseField>
+
+```bash
+curl https://mejoragemeseg-production.up.railway.app/cacao/lots/next-code \
+  -H "Authorization: Bearer <jwt_token>"
+```
+
+---
+
 ### GET /cacao/lots/:id
 
 Returns full details of a single lot including all receptions, settlements, and shipment allocations.
+
+**Authentication:** Required (CACAO section `view` permission)
 
 <ParamField path="id" type="number" required>Lot ID.</ParamField>
 
@@ -430,7 +482,7 @@ Settlements record the final payment obligation to a supplier for one or more lo
 
 Creates a new settlement. A corresponding Payable record is automatically generated.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 #### Request Body
 
@@ -497,27 +549,28 @@ curl -X POST https://mejoragemeseg-production.up.railway.app/cacao/settlements \
 
 ### GET /cacao/settlements
 
-Returns all settlement records ordered by date descending.
+Returns all settlement records for the caller's company, ordered by date descending.
 
-**Authentication:** Required
-
----
-
-### GET /cacao/settlements/:id
-
-Returns full detail of a single settlement by its `LIQ-XXXX` code or numeric ID.
-
-<ParamField path="id" type="string" required>
-  Settlement identifier. Accepts `LIQ-XXXX` format or numeric ID.
-</ParamField>
+**Authentication:** Required (CACAO section `view` permission)
 
 ---
 
-### DELETE /cacao/settlements/:id
+### GET /cacao/settlements/next-id
 
-Deletes a settlement and its linked payable record.
+Returns the next sequential settlement code (`LIQ-XXXX`) that would be assigned to a new settlement. Useful for pre-populating forms.
 
-<ParamField path="id" type="string" required>Settlement identifier.</ParamField>
+**Authentication:** Required (CACAO section `view` permission)
+
+#### Response
+
+<ResponseField name="nextId" type="string">
+  The next available settlement code (e.g. `"LIQ-0012"`).
+</ResponseField>
+
+```bash
+curl https://mejoragemeseg-production.up.railway.app/cacao/settlements/next-id \
+  -H "Authorization: Bearer <jwt_token>"
+```
 
 ---
 
@@ -529,7 +582,7 @@ Price fixings transition a lot's price from **provisional** to **definitive**. O
 
 Creates a new price fixing for a lot.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 #### Request Body
 
@@ -561,9 +614,9 @@ Returns the created price fixing record with `status: "PROVISIONAL"`.
 
 ### GET /cacao/price-fixings
 
-Returns all price fixing records.
+Returns all price fixing records for the caller's company.
 
-**Authentication:** Required
+**Authentication:** Required (CACAO section `view` permission)
 
 ---
 
@@ -571,7 +624,7 @@ Returns all price fixing records.
 
 Updates a price fixing record — typically used to confirm a provisional fixing as definitive, or to adjust prices before confirmation.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 <ParamField path="id" type="number" required>Price fixing ID.</ParamField>
 
@@ -585,7 +638,7 @@ Shipments record exports or deliveries to clients. Each shipment is assigned a s
 
 Creates a new shipment. A corresponding Receivable record is automatically generated.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
 
 #### Request Body
 
@@ -652,27 +705,28 @@ curl -X POST https://mejoragemeseg-production.up.railway.app/cacao/shipments \
 
 ### GET /cacao/shipments
 
-Returns all shipment records.
+Returns all shipment records for the caller's company.
 
-**Authentication:** Required
-
----
-
-### GET /cacao/shipments/:id
-
-Returns full detail of a single shipment by its `EMB-XXXX` code or numeric ID.
-
-<ParamField path="id" type="string" required>
-  Shipment identifier. Accepts `EMB-XXXX` format or numeric ID.
-</ParamField>
+**Authentication:** Required (CACAO section `view` permission)
 
 ---
 
-### DELETE /cacao/shipments/:id
+### GET /cacao/shipments/next-id
 
-Deletes a shipment and its linked receivable.
+Returns the next sequential shipment code (`EMB-XXXX`) that would be assigned to a new shipment. Useful for pre-populating forms.
 
-<ParamField path="id" type="string" required>Shipment identifier.</ParamField>
+**Authentication:** Required (CACAO section `view` permission)
+
+#### Response
+
+<ResponseField name="nextId" type="string">
+  The next available shipment code (e.g. `"EMB-0008"`).
+</ResponseField>
+
+```bash
+curl https://mejoragemeseg-production.up.railway.app/cacao/shipments/next-id \
+  -H "Authorization: Bearer <jwt_token>"
+```
 
 ---
 
@@ -682,9 +736,15 @@ Payables are auto-created when a settlement is recorded. They track what Mikacao
 
 ### GET /cacao/payables
 
-Returns all payable records with their current payment status.
+Returns all payable records for the caller's company with their current payment status. Optionally filter by status.
 
-**Authentication:** Required
+**Authentication:** Required (CACAO section `view` permission)
+
+#### Query Parameters
+
+<ParamField query="status" type="string">
+  Filter by payment status. Accepted values: `PENDING`, `PARTIAL`, `PAID`.
+</ParamField>
 
 #### Response
 
@@ -710,13 +770,29 @@ Returns all payable records with their current payment status.
 
 ---
 
-### PATCH /cacao/payables/:id
+### POST /cacao/payables/:id/pay
 
 Records a payment against an existing payable. Updates `amountPaid`, `balance`, and `status` automatically.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
+
+#### Path Parameters
 
 <ParamField path="id" type="number" required>Payable ID.</ParamField>
+
+#### Request Body
+
+<ParamField body="amount" type="number" required>
+  Amount being paid in USD.
+</ParamField>
+
+<ParamField body="method" type="string" required>
+  Payment method (e.g. `"Transferencia"`, `"Cheque"`, `"Efectivo"`).
+</ParamField>
+
+<ParamField body="reference" type="string">
+  Optional payment reference number or transaction ID.
+</ParamField>
 
 ---
 
@@ -726,9 +802,15 @@ Receivables are auto-created when a shipment is recorded. They track what client
 
 ### GET /cacao/receivables
 
-Returns all receivable records with their current collection status.
+Returns all receivable records for the caller's company with their current collection status. Optionally filter by status.
 
-**Authentication:** Required
+**Authentication:** Required (CACAO section `view` permission)
+
+#### Query Parameters
+
+<ParamField query="status" type="string">
+  Filter by collection status. Accepted values: `PENDING`, `PARTIAL`, `COLLECTED`.
+</ParamField>
 
 #### Response
 
@@ -752,13 +834,29 @@ Returns all receivable records with their current collection status.
 
 ---
 
-### PATCH /cacao/receivables/:id
+### POST /cacao/receivables/:id/receive
 
-Records a collection against an existing receivable.
+Records a collection against an existing receivable. Updates `amountReceived`, `balance`, and `status` automatically.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
+
+#### Path Parameters
 
 <ParamField path="id" type="number" required>Receivable ID.</ParamField>
+
+#### Request Body
+
+<ParamField body="amount" type="number" required>
+  Amount collected in USD.
+</ParamField>
+
+<ParamField body="method" type="string" required>
+  Collection method (e.g. `"Transferencia"`, `"Cheque"`, `"Efectivo"`).
+</ParamField>
+
+<ParamField body="reference" type="string">
+  Optional collection reference number or transaction ID.
+</ParamField>
 
 ---
 
@@ -768,9 +866,15 @@ The Kardex is the master inventory ledger. Every reception adds stock and every 
 
 ### GET /cacao/kardex
 
-Returns all Kardex entries in chronological order.
+Returns all Kardex entries for the caller's company in chronological order. Optionally filter by lot.
 
-**Authentication:** Required
+**Authentication:** Required (CACAO section `view` permission)
+
+#### Query Parameters
+
+<ParamField query="lotId" type="string">
+  Filter entries by lot ID. Returns only movements for the specified lot.
+</ParamField>
 
 #### Response
 
@@ -796,37 +900,100 @@ Returns all Kardex entries in chronological order.
 
 ---
 
+### GET /cacao/kardex/:lotId
+
+Returns all Kardex entries for a single lot, ordered chronologically.
+
+**Authentication:** Required (CACAO section `view` permission)
+
+#### Path Parameters
+
+<ParamField path="lotId" type="number" required>
+  Numeric ID of the lot whose Kardex entries to retrieve.
+</ParamField>
+
+```bash
+curl https://mejoragemeseg-production.up.railway.app/cacao/kardex/5 \
+  -H "Authorization: Bearer <jwt_token>"
+```
+
+---
+
 ## Unit Config
 
-Configures the default sack weights used to convert between `SACO` and `KG` across the system.
+Manages the unit-of-measure configurations used to convert between `SACO` and `KG` across the system. Each record defines a named unit with a kg-per-unit factor.
 
 ### GET /cacao/unit-config
 
-Returns the current unit configuration.
+Returns all unit configurations for the caller's company.
 
-**Authentication:** Required
+**Authentication:** Required (CACAO section `view` permission)
 
 #### Response
 
-<ResponseField name="sacoMichoacan" type="number">
-  Weight of a Michoacán sack in kg (default: `90`).
+<ResponseField name="[].id" type="number">Unit config ID.</ResponseField>
+
+<ResponseField name="[].name" type="string">
+  Internal name of the unit (e.g. `"SACO_MICHOACAN"`, `"SACO_ESTANDAR"`).
 </ResponseField>
 
-<ResponseField name="sacoEstandar" type="number">
-  Weight of a standard sack in kg (default: `69`).
+<ResponseField name="[].displayName" type="string">
+  Human-readable display label (e.g. `"Saco Michoacán (90 kg)"`).
 </ResponseField>
 
-<ResponseField name="sacoPersonalizado" type="number">
-  Weight of a custom sack in kg (default: `62`).
+<ResponseField name="[].kgPerUnit" type="number">
+  How many kilograms one unit represents.
+</ResponseField>
+
+<ResponseField name="[].isDefault" type="boolean">
+  Whether this is the default unit for the company.
 </ResponseField>
 
 ---
 
-### PATCH /cacao/unit-config
+### POST /cacao/unit-config
 
-Updates one or more sack weight values.
+Creates a new unit configuration.
 
-**Authentication:** Required
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
+
+#### Request Body
+
+<ParamField body="name" type="string" required>
+  Internal identifier for this unit (e.g. `"SACO_MICHOACAN"`).
+</ParamField>
+
+<ParamField body="displayName" type="string" required>
+  Human-readable display label.
+</ParamField>
+
+<ParamField body="kgPerUnit" type="number" required>
+  Kilograms per unit conversion factor.
+</ParamField>
+
+<ParamField body="isDefault" type="boolean">
+  Set to `true` to make this the company's default unit.
+</ParamField>
+
+---
+
+### PATCH /cacao/unit-config/:id
+
+Updates an existing unit configuration.
+
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
+
+<ParamField path="id" type="number" required>Unit config ID.</ParamField>
+
+---
+
+### DELETE /cacao/unit-config/:id
+
+Permanently deletes a unit configuration.
+
+**Authentication:** Required (ADMIN role, CACAO section `write` permission)
+
+<ParamField path="id" type="number" required>Unit config ID.</ParamField>
 
 ---
 
@@ -836,7 +1003,7 @@ Updates one or more sack weight values.
 
 Returns an aggregate overview of the cacao operation: inventory on hand, pending settlements, pending shipments, outstanding payables, and outstanding receivables.
 
-**Authentication:** Required
+**Authentication:** Required (CACAO section `view` permission)
 
 #### Response
 

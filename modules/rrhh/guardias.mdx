@@ -1,7 +1,7 @@
 ---
-title: "Guard Management: Assignments, Movements, and Personnel History"
+title: "Guardias: Entity Assignments, Movements, and History"
 sidebarTitle: "Guardias"
-description: "Track active guards, their entity assignments synced from Google Drive, entry/exit movements, and the combined history timeline."
+description: "Track active guards, their Drive-synced entity assignments, entry/exit movement cases, and the combined history timeline per guard."
 ---
 
 The **Listado de Guardias** page at `/rrhh/guardias` (`GuardiasList.tsx`) is the central hub for guard management in MejoraGemeseg. It is not a passive read-only list — it hosts the Drive sync button, the personal data editor, the exit action, and the configuration modals for Drive folders and custom fields. Everything that happens to an active guard passes through or is visible from this page.
@@ -89,13 +89,13 @@ Values are stored in `GuardiaFichaPersonal.camposPersonalizados` as a JSON objec
 
 The **"Sincronizar Drive"** button calls:
 
-```
+```http
 POST /personal/drive/sync-entidades
 ```
 
 `DriveService.syncEntidadesFolder(companyId, userId)` reads the Drive root configured in `FolderConfig type='CUMPLIMIENTO'` and expects this folder structure:
 
-```
+```text
 <root>/
   Público/
     <Provincia - Entidad>/
@@ -174,9 +174,10 @@ model MovimientoPersonal {
   nombreGuardia String
   tipo          TipoMovimientoPersonal
   estado        EstadoMovimientoPersonal @default(EN_PROCESO)
-  origen        String  // 'RECLUTAMIENTO_CONTRATAR' | 'MANUAL_GUARDIAS_LIST'
+  origen        String   // 'RECLUTAMIENTO_CONTRATAR' | 'MANUAL_GUARDIAS_LIST'
   companyId     Int
   createdBy     Int
+  createdAt     DateTime @default(now())
   completadoAt  DateTime?
   items         MovimientoPersonalItem[]
 
@@ -239,7 +240,7 @@ Created automatically by `DriveService.contratarCandidato()` when a candidate is
   <Step title="Optional: archive the Drive folder">
     With the case `COMPLETADO`, the "Archivar carpeta" button in `MovimientoDetalleModal.tsx` becomes available. It moves (does not delete) the guard's Drive folder to `FolderConfig type='GUARDIAS_ARCHIVO'`.
 
-    ```
+```http
     POST /personal/drive/guardia/:cedula/archivar-carpeta
     ```
   </Step>

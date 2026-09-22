@@ -1,5 +1,5 @@
 ---
-title: "Companies API: Multi-Tenant Management and White-Label Branding"
+title: "Companies API: Multi-Tenant Setup and White-Label Branding"
 sidebarTitle: "Companies"
 description: "REST endpoints for company CRUD and branding. Super Admin manages all companies. Company Admin updates their own branding, logo, and section access."
 ---
@@ -123,6 +123,28 @@ curl https://mejoragemeseg-production.up.railway.app/companies/slug/gemeseg
   "textColor": "#1e293b",
   "domain": "gemeseg.com"
 }
+```
+
+---
+
+### GET /companies/domain/:domain
+
+Looks up a company by its registered email domain. Used internally to match a login email to its tenant company and load the correct white-label theme. This endpoint does not require authentication.
+
+**Authentication:** None required.
+
+#### Path Parameters
+
+<ParamField path="domain" type="string" required>
+  The email domain to look up (e.g. `"gemeseg.com"`, `"acme.com"`).
+</ParamField>
+
+#### Response
+
+Returns the matching company object with branding fields, or `404` if no company is registered for that domain.
+
+```bash
+curl https://mejoragemeseg-production.up.railway.app/companies/domain/gemeseg.com
 ```
 
 ---

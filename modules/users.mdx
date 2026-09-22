@@ -1,7 +1,7 @@
 ---
 title: "User Management: CRUD, Profiles, and Section Permissions"
 sidebarTitle: "Users"
-description: "Admins manage users with full CRUD, role assignment, and section-level permissions. Every user belongs to a company and has a role (ADMIN, MANAGER, EMPLOYEE)."
+description: "Manage users with CRUD, role assignment, and section-level permissions. Each user belongs to a company and has a role: ADMIN, MANAGER, or EMPLOYEE."
 ---
 
 Every person who accesses MejoraGemeseg is represented by a `User` record. Users are always scoped to a single company via `companyId`, which is embedded in the JWT and applied automatically to every query. Admins create and manage users; the password is always hashed with bcrypt before storage and is never included in any response.
@@ -185,6 +185,26 @@ Partially updates a user. All fields are optional. Cross-company edits are rejec
 <ParamField body="departmentId" type="integer | null">Department FK, or `null` to unset.</ParamField>
 <ParamField body="roleId" type="integer | null">Role catalogue FK, or `null` to unset.</ParamField>
 <ParamField body="isActive" type="boolean">Manually toggle active status.</ParamField>
+
+---
+
+### PATCH /users/me/active-agent — Set active AI agent
+
+Updates the authenticated user's currently selected AI agent. Requires a valid JWT (`AuthGuard('jwt')`). No role restriction — any authenticated user can call this endpoint.
+
+<ParamField body="agentId" type="integer | null" required>
+  The `id` of the AI agent to activate, or `null` to clear the selection.
+</ParamField>
+
+```json
+// PATCH /users/me/active-agent
+{ "agentId": 2 }
+```
+
+```json
+// PATCH /users/me/active-agent — clear selection
+{ "agentId": null }
+```
 
 ---
 

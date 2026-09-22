@@ -1,7 +1,7 @@
 ---
 title: "Authentication: JWT Login, Registration, and Role Guards"
 sidebarTitle: "Authentication"
-description: "MejoraGemeseg uses JWT tokens (7-day expiry) with bcrypt password hashing. Registration is restricted to company email domains."
+description: "MejoraGemeseg uses stateless JWT auth with 7-day tokens, bcrypt hashing, and role-based guards. Registration requires a valid corporate email domain."
 ---
 
 MejoraGemeseg uses a stateless JWT-based authentication system built on NestJS Passport. Every protected route validates a signed token extracted from the `Authorization: Bearer` header. Passwords are hashed with bcrypt (salt rounds: 10) before storage and are never returned in any response. The `companyId` embedded in the token drives multi-tenant data isolation across all modules.
@@ -14,7 +14,7 @@ MejoraGemeseg uses a stateless JWT-based authentication system built on NestJS P
 | `POST` | `/auth/login` | No | Log in and receive a JWT |
 | `POST` | `/auth/forgot-password` | No | Reset a user's password |
 | `GET` | `/auth/profile` | Yes (`AuthGuard('jwt')`) | Return the authenticated user's JWT payload |
-| `GET` | `/auth/status` | No | Health check for the auth module |
+| `GET` | `/auth/status` | No | Health check — returns `{ status: 'auth module ready' }` |
 
 ---
 
@@ -111,7 +111,7 @@ Tokens are configured in `AuthModule` with a fixed `expiresIn: '7d'`. The signin
 
 Registration checks every incoming email against the `domain` field of all companies in the database. If none of the configured company domains match the email's domain, the request is rejected:
 
-```
+```http
 403 Forbidden
 "Solo se permiten correos corporativos (@gemeseg.com)"
 ```
@@ -191,7 +191,7 @@ getStats(@Req() req: any) {
 
 ```typescript
 // 1. Login
-const loginRes = await fetch('https://api.mejora.gemeseg.com/auth/login', {
+const loginRes = await fetch('https://mejoragemeseg-production.up.railway.app/auth/login', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -203,7 +203,7 @@ const loginRes = await fetch('https://api.mejora.gemeseg.com/auth/login', {
 const { token } = await loginRes.json();
 
 // 2. Use the token in a subsequent request
-const profileRes = await fetch('https://api.mejora.gemeseg.com/auth/profile', {
+const profileRes = await fetch('https://mejoragemeseg-production.up.railway.app/auth/profile', {
   headers: {
     Authorization: `Bearer ${token}`,
   },

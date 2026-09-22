@@ -6,7 +6,7 @@ description: "REST endpoints for project management. Create projects, manage mem
 
 The Projects API provides a full lifecycle for project management, from creation through member administration and Kanban task tracking. Any authenticated user can create a project — the creator is automatically assigned the `OWNER` role upon creation. ADMIN users are also automatically treated as project owners for every project in their company, giving them full management rights without needing an explicit membership record. Project visibility is membership-scoped: regular users only see projects they created or joined; admins see all company projects. Results are paginated at 10 projects per page.
 
-Tasks associated with a project are created and listed through the nested `POST /projects/:id/tasks` and `GET /projects/:id/tasks` endpoints documented below. For updating or deleting individual tasks, see the [Tasks API](/api/tasks).
+Tasks associated with a project are created and listed through the nested `POST /projects/:projectId/tasks` and `GET /projects/:projectId/tasks` endpoints documented below. For updating or deleting individual tasks, see the [Tasks API](/api/tasks).
 
 Base URL: `https://mejoragemeseg-production.up.railway.app`
 
@@ -293,7 +293,7 @@ curl -X GET https://mejoragemeseg-production.up.railway.app/projects/admin/stats
 
 ---
 
-### GET /projects/:id/tasks
+### GET /projects/:projectId/tasks
 
 Returns all tasks belonging to the specified project, ordered by `createdAt` descending. Each task includes its list of assignees.
 
@@ -302,7 +302,7 @@ Returns all tasks belonging to the specified project, ordered by `createdAt` des
 
 #### Path Parameters
 
-<ParamField path="id" type="integer" required>
+<ParamField path="projectId" type="integer" required>
   Numeric ID of the project whose tasks should be listed.
 </ParamField>
 
@@ -333,6 +333,7 @@ curl -X GET https://mejoragemeseg-production.up.railway.app/projects/10/tasks \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
 
+
 ```json
 [
   {
@@ -355,7 +356,7 @@ curl -X GET https://mejoragemeseg-production.up.railway.app/projects/10/tasks \
 
 ---
 
-### POST /projects/:id/tasks
+### POST /projects/:projectId/tasks
 
 Creates a new task within the specified project. The caller must be a project member with role `OWNER` or `MEMBER` — `VIEWER` members cannot create tasks. Defaults: `status` = `TODO`, `priority` = `MEDIUM`, `estimatedHours` = `0`.
 
@@ -364,7 +365,7 @@ Creates a new task within the specified project. The caller must be a project me
 
 #### Path Parameters
 
-<ParamField path="id" type="integer" required>
+<ParamField path="projectId" type="integer" required>
   Numeric ID of the project in which to create the task.
 </ParamField>
 
@@ -404,7 +405,7 @@ Creates a new task within the specified project. The caller must be a project me
 
 #### Response Fields
 
-Returns the newly created task object (same shape as items in `GET /projects/:id/tasks`).
+Returns the newly created task object (same shape as items in `GET /projects/:projectId/tasks`).
 
 #### Example
 
@@ -443,7 +444,7 @@ curl -X POST https://mejoragemeseg-production.up.railway.app/projects/10/tasks \
 
 ---
 
-### GET /projects/:id/members
+### GET /projects/:projectId/members
 
 Returns all membership records for the specified project, including each member's user summary and project role.
 
@@ -452,7 +453,7 @@ Returns all membership records for the specified project, including each member'
 
 #### Path Parameters
 
-<ParamField path="id" type="integer" required>
+<ParamField path="projectId" type="integer" required>
   Numeric ID of the project whose member list to retrieve.
 </ParamField>
 
@@ -476,6 +477,7 @@ curl -X GET https://mejoragemeseg-production.up.railway.app/projects/10/members 
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
 
+
 ```json
 [
   {
@@ -495,7 +497,7 @@ curl -X GET https://mejoragemeseg-production.up.railway.app/projects/10/members 
 
 ---
 
-### POST /projects/:id/members
+### POST /projects/:projectId/members
 
 Adds a user to the project with a specified role. The caller must be either the project `OWNER` or a system `ADMIN`. The target user must be active and belong to the same company as the caller. Returns `403 Forbidden` if the user is already a member.
 
@@ -504,7 +506,7 @@ Adds a user to the project with a specified role. The caller must be either the 
 
 #### Path Parameters
 
-<ParamField path="id" type="integer" required>
+<ParamField path="projectId" type="integer" required>
   Numeric ID of the project.
 </ParamField>
 
@@ -548,7 +550,7 @@ curl -X POST https://mejoragemeseg-production.up.railway.app/projects/10/members
 
 ---
 
-### DELETE /projects/:id/members/:userId
+### DELETE /projects/:projectId/members/:userId
 
 Removes a member from the project. The caller must be the project `OWNER` or system `ADMIN`. The last `OWNER` of a project cannot be removed — at least one owner must always remain.
 
@@ -557,7 +559,7 @@ Removes a member from the project. The caller must be the project `OWNER` or sys
 
 #### Path Parameters
 
-<ParamField path="id" type="integer" required>
+<ParamField path="projectId" type="integer" required>
   Numeric ID of the project.
 </ParamField>
 
@@ -578,6 +580,7 @@ curl -X DELETE https://mejoragemeseg-production.up.railway.app/projects/10/membe
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
 ```
 
+
 ```json
 {
   "message": "Miembro eliminado del proyecto"
@@ -586,7 +589,7 @@ curl -X DELETE https://mejoragemeseg-production.up.railway.app/projects/10/membe
 
 ---
 
-### PATCH /projects/:id/members/:userId/role
+### PATCH /projects/:projectId/members/:userId/role
 
 Changes the project role of an existing member. Only system `ADMIN` users can call this endpoint. Downgrading the sole remaining `OWNER` is blocked — a `403 Forbidden` is returned if the operation would leave the project with no owners.
 
@@ -595,7 +598,7 @@ Changes the project role of an existing member. Only system `ADMIN` users can ca
 
 #### Path Parameters
 
-<ParamField path="id" type="integer" required>
+<ParamField path="projectId" type="integer" required>
   Numeric ID of the project.
 </ParamField>
 

@@ -1,7 +1,7 @@
 ---
-title: "Software Tool Inventory and User Assignments"
+title: "Software Tool Inventory and User Assignment Management"
 sidebarTitle: "Tools"
-description: "Manage a catalog of software tools, assign them to multiple users, and track assignment history with full audit logs."
+description: "Maintain a company-wide catalog of software tools, assign seats to individual users with version and license details, and audit every assignment change."
 ---
 
 The Tools module gives the systems administrator a centralized registry of every software tool used across the organization. Admins can maintain a catalog of tools (with optional category tagging), assign specific tools to individual users together with version and license details, and retrieve a complete audit trail for every change ever made to an assignment. The entire section is gated behind the `sistemas@gemeseg.com` user account — no other user sees the Tools navigation item, regardless of their platform role.
@@ -156,6 +156,21 @@ To assign one tool to several users, call `POST /tools/assign` once per user. Th
 
 ---
 
+## Listing assignments
+
+`GET /tools/assignments` returns all active tool assignments across all users. Optional query parameters allow filtering by tool name or user name.
+
+```http title="GET /tools/assignments — query parameters"
+GET /tools/assignments?tool=Adobe&user=Ana
+```
+
+| Parameter | Type | Description |
+|---|---|---|
+| `tool` | `string` | Filter assignments by tool name (partial match). |
+| `user` | `string` | Filter assignments by user name (partial match). |
+
+---
+
 ## Updating an assignment
 
 Use `PATCH /tools/assign/:id` to update the `version` or `licenseKey` of an existing assignment. Only the fields supplied in the request body are changed.
@@ -249,7 +264,7 @@ POST /tools/assign → 403 Forbidden (non-Admin)
 | `GET` | `/tools` | `sistemas@gemeseg.com` | List the full tool catalog. |
 | `POST` | `/tools` | `ADMIN` only | Add a new tool to the catalog. |
 | `DELETE` | `/tools/:id` | `ADMIN` only | Delete a tool and all its assignments. |
-| `GET` | `/tools/assignments` | `ADMIN` only | List all active tool assignments across all users. |
+| `GET` | `/tools/assignments` | `ADMIN` only | List all active tool assignments; supports `tool` and `user` query filters. |
 | `GET` | `/tools/users` | `ADMIN` only | List users together with their assigned tools. |
 | `POST` | `/tools/assign` | `ADMIN` only | Assign a tool to a user (with optional version and license key). |
 | `PATCH` | `/tools/assign/:id` | `ADMIN` only | Update the version or license key of an existing assignment. |

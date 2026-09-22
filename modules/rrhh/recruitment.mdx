@@ -19,8 +19,8 @@ model JobPosition {
   id                 Int      @id @default(autoincrement())
   puesto             String
   descripcion        String?
-  // Array of { nombre: string, tipo?: string }
-  // tipo is one of: TEXTO | ALFANUMERICO | NUMERICO | CORREO | TELEFONO | FECHA
+  // Array of { nombre: string, tipo?: string, obligatorio?: boolean }
+  // tipo is one of: TEXTO | NUMERICO | CORREO | TELEFONO | FECHA
   // Purely visual guide — not validated by the system.
   camposRequeridos   Json     @default("[]")
   // Array of { nombre: string, extensiones?: string[], obligatorio?: boolean }
@@ -55,21 +55,16 @@ The **Delete button is intentionally absent from the UI** because deleting a pos
 `POST` and `PATCH` accept:
 
 ```typescript
-// CreateContractTemplateDto (contract.dto.ts)
-class CreateContractTemplateDto {
-  name: string;        // visible name
-  type: string;        // free-text document type
-  driveUrl?: string;   // link to the .docx source in Drive
-}
-
-// For JobPosition specifically (job-position.dto.ts)
+// job-position.dto.ts
 class CreateJobPositionDto {
   puesto: string;
   descripcion?: string;
+  // tipo: 'TEXTO' | 'NUMERICO' | 'CORREO' | 'TELEFONO' | 'FECHA'
   camposRequeridos?: { nombre: string; tipo?: string; obligatorio?: boolean }[];
+  // extensiones: visual guide only (e.g. ['pdf', 'doc']) — not enforced
   archivosRequeridos?: { nombre: string; extensiones?: string[]; obligatorio?: boolean }[];
-  estado?: string;
-  tipoContratacion?: string;
+  estado?: string;   // 'ABIERTA' | 'CERRADA'
+  tipoContratacion?: string; // 'GUARDIA' | 'ADMINISTRATIVO'
 }
 ```
 
@@ -90,7 +85,7 @@ The applicant portal lives in a completely separate repository (`RECLUTAMIENTO`)
 
 Clicking **"Sincronizar"** in `ReclutamientoPage` calls:
 
-```
+```http
 POST /personal/reclutamiento/sync
 ```
 
@@ -120,7 +115,7 @@ The result is cached in `localStorage` (keyed by `companyId`) so the last-known 
 
 The **"Marcar como Contratado"** button in the candidate detail modal is the single path to hiring. It requires `canWrite('RRHH')` and triggers a `ConfirmDialog` before proceeding.
 
-```
+```http
 POST /personal/reclutamiento/candidatos/:folderId/contratar
 ```
 
@@ -156,13 +151,13 @@ When hiring a guard, the new folder lands in **"Sin Asignar"**. It appears in `/
 
 When a candidate submits documentation as a single combined PDF (`modoSubida = 'archivo_unico'`), MejoraGemeseg can use Vertex AI (Gemini 2.5 Flash) to propose how to split the PDF into individual documents.
 
-```
+```http
 POST /personal/reclutamiento/candidatos/:folderId/analizar
 ```
 
 The analysis is **always a proposal** — it never writes anything. The RRHH user reviews miniature thumbnails (one per page, rendered by `pdfjs-dist`) and confirms or corrects the page-to-document mapping before running:
 
-```
+```http
 POST /personal/reclutamiento/candidatos/:folderId/aplicar-analisis
 ```
 

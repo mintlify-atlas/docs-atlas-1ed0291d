@@ -1,5 +1,5 @@
 ---
-title: "Custodias: Security Transport Orders, Payroll, and PDF Generation"
+title: "Custodias: Transport Orders, Payroll, and PDF Exports"
 sidebarTitle: "Custodias"
 description: "Manage security transport orders (HACIENDA, PUERTO, VIP) with state tracking, automated payroll matrix, and PDFKit-generated documents."
 ---
@@ -131,7 +131,7 @@ class CreateCustodiaDto {
 |--------|-------|-------------|
 | `POST` | `/custodias` | Create a new custodia order |
 | `GET` | `/custodias` | List custodias (filters: `fechaInicio`, `fechaFin`, `tipo`, `estado`) |
-| `GET` | `/custodias/dashboard` | KPIs for the current month |
+| `GET` | `/custodias/dashboard` | KPIs for the current month (optional `?mes=YYYY-MM`) |
 | `GET` | `/custodias/trabajador` | Trips and earnings by worker cedula (`?cedula=&mes=`) |
 | `GET` | `/custodias/available-custodios` | Available employees from the CUSTODIAS Drive folder |
 | `POST` | `/custodias/gemebot/query` | GEME-BOT AI operational query assistant |
@@ -153,7 +153,7 @@ class UpdateEstadoDto {
 
 ### Dashboard Response Fields
 
-`GET /custodias/dashboard` returns the following KPIs scoped to the current calendar month:
+`GET /custodias/dashboard` returns the following KPIs scoped to the current calendar month. Pass `?mes=YYYY-MM` to query a specific month instead.
 
 - `total_viajes` — total trips created
 - `total_nomina_usd` — sum of payroll for completed (`LLEGO`) custodias
@@ -209,7 +209,7 @@ All PDFs are generated server-side using [PDFKit](https://pdfkit.org/). Colour p
 ```json
 // POST /custodias/gemebot/query
 {
-  "query": "¿Cuántas custodias tipo PUERTO completó Juan Pérez en enero?"
+  "mensaje": "¿Cuántas custodias tipo PUERTO completó Juan Pérez en enero?"
 }
 ```
 

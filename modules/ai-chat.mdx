@@ -1,7 +1,7 @@
 ---
 title: "AI Chat Assistant Powered by GitHub Models (gpt-4o-mini)"
 sidebarTitle: "AI Chat"
-description: "MejoraGemeseg includes a floating AI chat drawer backed by GitHub Models gpt-4o-mini, with per-user rate limiting, conversation history, and page context detection."
+description: "Floating AI chat drawer backed by GitHub Models gpt-4o-mini with per-user rate limiting, conversation history, and URL context detection."
 ---
 
 MejoraGemeseg ships with an AI chat assistant available on every page of the platform. It is backed by GitHub Models using the `gpt-4o-mini` model and is designed to answer questions about projects, tasks, and operational data in context. Users interact with the chat through a floating action button that opens a side drawer without leaving their current workflow. Every conversation is persisted in the database, rate-limited per user, and scoped to a specific AI agent.
@@ -21,7 +21,7 @@ The drawer never triggers a navigation event, so users can continue reading dash
 
 The backend calls the GitHub Models inference endpoint at `https://models.inference.ai.azure.com/chat/completions` using `gpt-4o-mini`. Authentication is performed with a `Bearer` token read from the `GITHUB_TOKEN` environment variable.
 
-```
+```bash
 GITHUB_TOKEN=ghp_xxxxxxxxxxxxxxxxxxxx
 ```
 
@@ -47,13 +47,13 @@ The service includes a two-pass intent mechanism. If the model returns a tag of 
 
 Each user is allowed **50 successful messages per calendar day**. The limit is enforced in the service layer before any AI call is made, using the `AiLog` table:
 
-```
+```text
 RATE_LIMIT = 50 messages / user / day
 ```
 
 Exceeding the limit returns HTTP **429 Too Many Requests** with the message:
 
-```
+```text
 Has alcanzado el límite de 50 mensajes hoy. Intenta mañana.
 ```
 
@@ -67,10 +67,10 @@ Each combination of `(userId, agentId)` can produce multiple `Conversation` thre
 model Conversation {
   id        Int           @id @default(autoincrement())
   userId    Int
-  agentId   Int
   context   String
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
+  agentId   Int
   messages  ChatMessage[]
   agent     Agent         @relation(fields: [agentId], references: [id])
   user      User          @relation(fields: [userId], references: [id])
@@ -82,7 +82,7 @@ model Conversation {
 model ChatMessage {
   id             Int          @id @default(autoincrement())
   conversationId Int
-  role           String       // "user" | "assistant"
+  role           String
   content        String
   tokensUsed     Int?
   model          String?
@@ -97,7 +97,7 @@ model ChatMessage {
 
 The frontend reads the current browser URL path and passes it to the API as the `context` field. The backend injects this string into the user message prefix sent to the model:
 
-```
+```text
 [Contexto: /proyectos/42] ¿Cuáles son las tareas pendientes?
 ```
 

@@ -1,14 +1,14 @@
 ---
 title: "MejoraGemeseg Architecture: NestJS, React, and PostgreSQL"
 sidebarTitle: "Overview"
-description: "Explore the monorepo structure, NestJS module layout, React frontend organization, and the data flow between services."
+description: "Explore the MejoraGemeseg monorepo structure, NestJS feature module layout, React 18 frontend organization, and the full data flow between services."
 ---
 
 MejoraGemeseg is a **monorepo** containing a NestJS backend and a React frontend that are deployed independently but share a single Git history. The backend exposes a REST API consumed exclusively by the frontend; there is no GraphQL layer or separate microservice. All persistent state lives in a single PostgreSQL 17 database accessed through Prisma ORM.
 
 ## Repository layout
 
-```
+```text
 MejoraGemeseg/
 ├── backend/                        # NestJS application
 │   ├── Dockerfile                  # Multi-stage build for Railway / Cloud Run
@@ -125,7 +125,7 @@ Axios is configured with a request interceptor that automatically attaches `Auth
 
 ## Infrastructure diagram
 
-```
+```text
 ┌─────────────────────────────────────────────────────────────────┐
 │                        Browser (SPA)                            │
 │                   React 18 + Vite (Vercel)                      │

@@ -1,5 +1,5 @@
 ---
-title: "Role-Based Access Control and Section Permissions"
+title: "Role-Based Access Control and Section Permissions in NestJS"
 sidebarTitle: "Permissions"
 description: "MejoraGemeseg uses JWT roles (ADMIN, MANAGER, EMPLOYEE) combined with section-level permissions (CompanySection, UserPermission) to gate access."
 ---
@@ -99,7 +99,7 @@ The `CompanySection` table records which sections are active for a company:
 model CompanySection {
   id        Int      @id @default(autoincrement())
   companyId Int
-  section   String   // e.g. "CACAO", "VENTAS", "PERSONAL"
+  section   String   // e.g. "CACAO", "VENTAS", "RRHH"
   createdAt DateTime @default(now())
 
   @@unique([companyId, section])
@@ -127,7 +127,7 @@ model UserPermission {
 
 The semantics mirror the `usePermissions` hook on the frontend:
 
-1. **Super Admin** (`companyId: null`) — always passes, no checks performed.
+1. **Super Admin** (`role === 'ADMIN'` and `companyId: null`) — always passes, no checks performed.
 2. **Section not in `CompanySection`** — denied (`403`).
 3. **`UserPermission` row exists** — `canView` / `canWrite` is enforced exactly.
 4. **No `UserPermission` row** — access is **permitted** (the default is permissive). This means users without explicit records can still access all enabled sections.
@@ -146,9 +146,9 @@ createReception(@Body() dto: CreateReceptionDto) { ... }
 
 The guard calls `PermissionsService` to check both `CompanySection` and `UserPermission` before allowing the request through. The full decision tree:
 
-```
+```text
 request arrives
-  └─ is Super Admin (companyId null)?  → allow
+  └─ is Super Admin (ADMIN + companyId null)? → allow
   └─ section enabled for company?      → no → 403
   └─ UserPermission row exists?
        └─ yes → enforce canView / canWrite

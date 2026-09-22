@@ -1,7 +1,7 @@
 ---
-title: "Multi-Tenant Architecture and White-Labeling in MejoraGemeseg"
+title: "Multi-Tenancy and White-Labeling in MejoraGemeseg Platform"
 sidebarTitle: "Multi-Tenancy"
-description: "MejoraGemeseg supports multiple companies with isolated data, per-company branding, and a Super Admin that manages all tenants."
+description: "How MejoraGemeseg isolates data per company, applies white-label branding, and uses a Super Admin account to manage all tenants from one deployment."
 ---
 
 MejoraGemeseg was designed from the start to serve multiple independent companies from a single deployment. Rather than running a separate database or schema per tenant, the platform uses a **shared database with row-level isolation**: every user and every piece of operational data carries a `companyId` foreign key that scopes all queries to the correct tenant. A special Super Admin account (identified by `companyId: null`) can read and manage data across all tenants.
@@ -58,7 +58,7 @@ When `companyId` is `null`, all `WHERE companyId = ?` clauses are omitted and th
 
 ```typescript
 isSuperAdmin(user: AuthUser): boolean {
-  return user.companyId === null;
+  return user.role === 'ADMIN' && !user.companyId;
 }
 ```
 
@@ -108,7 +108,7 @@ model CompanySection {
   id        Int      @id @default(autoincrement())
   companyId Int
   company   Company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  section   String   // e.g. "PROJECTS", "CACAO", "VENTAS", "PERSONAL"
+  section   String   // e.g. "PROJECTS", "CACAO", "VENTAS", "RRHH"
   createdAt DateTime @default(now())
 
   @@unique([companyId, section])
@@ -117,7 +117,7 @@ model CompanySection {
 
 Known section keys used throughout the application:
 
-`DASHBOARD` · `PROJECTS` · `ADMIN` · `COMPANIES` · `COMPANY_SETTINGS` · `CACAO` · `CUSTODIAS` · `PERSONAL` · `VENTAS` · `SISTEMAS` · `TOOLS` · `AGENTS`
+`DASHBOARD` · `PROJECTS` · `ADMIN` · `TOOLS` · `CACAO` · `COMPANY_SETTINGS` · `COMPANIES` · `CUSTODIAS` · `RRHH` · `VENTAS` · `SISTEMAS`
 
 A company that does not have a `CompanySection` row for `CACAO` will never see the cacao module in the sidebar or be able to navigate to its routes. The `SectionRoute` component in the frontend and `SectionPermissionGuard` on the backend both enforce this.
 

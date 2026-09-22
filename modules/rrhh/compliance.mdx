@@ -1,7 +1,7 @@
 ---
-title: "Document Compliance Tracking for Guards and Administrative Staff"
+title: "Compliance: Document Tracking for Guards and Staff"
 sidebarTitle: "Compliance"
-description: "MejoraGemeseg checks guard and admin staff document compliance against configurable requirements, with traffic-light status indicators and reminder sending."
+description: "Check guard and admin staff document compliance against per-entity requirements, with traffic-light status indicators and manual email reminders."
 ---
 
 The Compliance sub-module gives RRHH a real-time view of which documents every guard (or administrative staff member) has submitted, which are missing or expiring, and whether each has been approved. Document files live in Google Drive — MejoraGemeseg reads them via sync and matches them against configurable requirements, never storing the files itself.
@@ -97,7 +97,7 @@ model EmployeeDocument {
 
 The compliance checklist for a guard is returned by:
 
-```
+```http
 GET /personal/drive/compliance/:cedula
 ```
 
@@ -122,7 +122,7 @@ The **`CumplimientoEntidades.tsx`** page at `/rrhh/cumplimiento` shows this as a
 
 The aggregate overview:
 
-```
+```http
 GET /personal/cumplimiento-entidades
 GET /personal/cumplimiento-entidades/:cedula
 ```
@@ -181,7 +181,7 @@ When a guard re-uploads a document (a new Drive file ID appears), the `DocumentR
 
 Reminders are **manual and per-guard** — there is no cron job or bulk-send endpoint. RRHH decides who to remind and when.
 
-```
+```http
 POST /personal/cumplimiento-entidades/guardia/:cedula/enviar-recordatorio
 ```
 
@@ -199,7 +199,7 @@ model GuardiaContacto {
 
 This record is set from the **"Configurar correo"** field in `GuardiaComplianceModal.tsx`.
 
-```
+```http
 GET  /personal/guardia-contacto/:cedula
 PATCH /personal/guardia-contacto/:cedula
 ```

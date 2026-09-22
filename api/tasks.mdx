@@ -1,14 +1,70 @@
 ---
-title: "Tasks API: Update, Detail, and Delete Endpoints"
+title: "Tasks API: List, Read, Update, and Delete Endpoints"
 sidebarTitle: "Tasks"
 description: "REST endpoints for individual task operations. Update status, priority, assignees, and dates. Tasks are created through the Projects API."
 ---
 
-The Tasks API handles read, update, and delete operations on individual task records. Tasks themselves are created via `POST /projects/:id/tasks` — see the [Projects API](/api/projects) for creation. Every task belongs to exactly one project, and access control is enforced through project membership: the caller must be a project member with role `OWNER` or `MEMBER` to modify or delete tasks. `VIEWER` members may read task detail but cannot mutate it. System `ADMIN` users bypass the membership check and can operate on any task within their company.
+The Tasks API handles read, update, and delete operations on individual task records. Tasks themselves are created via `POST /projects/:projectId/tasks` — see the [Projects API](/api/projects) for creation. Every task belongs to exactly one project, and access control is enforced through project membership: the caller must be a project member with role `OWNER` or `MEMBER` to modify or delete tasks. `VIEWER` members may read task detail but cannot mutate it. System `ADMIN` users bypass the membership check and can operate on any task within their company.
 
 When updating assignees via `PATCH /tasks/:id`, the full `assigneeIds` array **replaces** the existing assignee list — it is not a delta. Pass an empty array (`[]`) to remove all assignees.
 
 Base URL: `https://mejoragemeseg-production.up.railway.app`
+
+---
+
+### GET /tasks/my-tasks
+
+Returns tasks relevant to the authenticated user across all projects. Supports optional query filters for status, direct assignment, and project scope. Tasks are returned in descending creation order.
+
+**Authentication:** Required — `Authorization: Bearer <jwt_token>`
+**Role required:** Any authenticated user.
+
+#### Query Parameters
+
+<ParamField query="status" type="string">
+  Filter by task status. Accepted values: `TODO`, `IN_PROGRESS`, `IN_REVIEW`, `DONE`, `CANCELLED`.
+</ParamField>
+
+<ParamField query="assignedToMe" type="string">
+  When set to `"true"`, returns only tasks directly assigned to the authenticated user.
+</ParamField>
+
+<ParamField query="projectId" type="integer">
+  Narrow results to tasks belonging to a specific project ID.
+</ParamField>
+
+#### Response Fields
+
+<ResponseField name="[]" type="array">
+  Array of task objects (same shape as `GET /tasks/:id` items — id, title, description, status, priority, startDate, endDate, estimatedHours, projectId, createdAt, assignees).
+</ResponseField>
+
+#### Example
+
+```bash
+curl -X GET "https://mejoragemeseg-production.up.railway.app/tasks/my-tasks?assignedToMe=true&status=IN_PROGRESS" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+```
+
+```json
+[
+  {
+    "id": 201,
+    "title": "Design homepage mockup",
+    "description": "Create Figma mockup for the new homepage",
+    "status": "IN_PROGRESS",
+    "priority": "HIGH",
+    "startDate": "2024-04-02T12:00:00.000Z",
+    "endDate": "2024-04-10T12:00:00.000Z",
+    "estimatedHours": 8,
+    "projectId": 10,
+    "createdAt": "2024-04-01T10:00:00.000Z",
+    "assignees": [
+      { "user": { "id": 42, "fullName": "Juan Pérez", "email": "juan.perez@gemeseg.com" } }
+    ]
+  }
+]
+```
 
 ---
 

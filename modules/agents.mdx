@@ -1,5 +1,5 @@
 ---
-title: "Custom AI Agents: System Prompts, Scopes, and User Assignments"
+title: "AI Agents: System Prompts, Scopes, and User Assignments"
 sidebarTitle: "Agents"
 description: "ADMIN users create AI agents with custom system prompts and scopes (GLOBAL, PROJECTS, TASKS, ADMIN), then assign them to specific users."
 ---
@@ -14,10 +14,10 @@ model Agent {
   name          String
   isActive      Boolean        @default(true)
   createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
-  createdBy     Int?           // null = global agent
-  instructions  String         // system prompt sent to gpt-4o-mini
+  createdBy     Int?
+  instructions  String
   scope         String         @default("GLOBAL")
+  updatedAt     DateTime       @updatedAt
   conversations Conversation[]
   activeUsers   User[]         @relation("UserActiveAgent")
   userLinks     UserAgent[]

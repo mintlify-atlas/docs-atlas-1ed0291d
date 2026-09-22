@@ -1,7 +1,7 @@
 ---
-title: "HR Document Generation with DOCX Templates"
+title: "HR Documentation: DOCX Templates, Trainings, and Complaints"
 sidebarTitle: "Documentation"
-description: "Generate personalized HR documents (contracts, letters) from .docx templates stored in Google Drive using [VARIABLE] placeholders mapped to guard data."
+description: "Generate personalized HR documents from .docx templates in Google Drive, manage training records and evidence, and handle the complaints Kanban board."
 ---
 
 The **Documentación** sub-module lives at `/rrhh/contracts` (`ContractsList.tsx`). Despite the internal path name, the page is labeled "Documentación" to the user — it covers any HR document type, not just employment contracts. From this page, RRHH can manage `.docx` templates, list previously generated documents, and navigate to the generation form. The same page also provides access to the Trainings and Complaints features documented at the end of this page.
@@ -119,7 +119,7 @@ class GenerateContractDto {
 
 Endpoint:
 
-```
+```http
 POST /personal/contracts/generate
 ```
 
@@ -131,7 +131,7 @@ The `Contract` model identifies documents by `cedula` and `nombreGuardia` (no FK
 
 List generated contracts:
 
-```
+```http
 GET /personal/contracts
 ```
 
@@ -170,7 +170,7 @@ model TrainingAttachment {
 
 Attachments are uploaded **directly to Drive** (never to local disk) via `DriveService.uploadFile()`. The upload endpoint is independent of a specific training ID, so files can be staged during the creation form before the training record is saved:
 
-```
+```http
 POST /personal/trainings/upload
 → { url: "https://drive.google.com/file/d/<id>/view" }
 ```
@@ -192,7 +192,7 @@ POST /personal/trainings/upload
 
 Trainings with a `dueDate` within the next 30 days (or already past due) and `completed = false` appear as **pending alerts** in the `PersonalDashboard.tsx` widget:
 
-```
+```http
 GET /personal/alerts
 ```
 
@@ -222,7 +222,7 @@ model ComplaintFieldDefinition {
 
 The description field and anonymous checkbox are always present. Custom field responses are saved in `Complaint.customFieldValues` (JSON, keyed by field ID).
 
-```
+```http
 POST /personal/complaints           // submit a complaint
 GET/POST/PATCH/DELETE /personal/complaint-fields  // manage custom fields
 ```
@@ -255,7 +255,7 @@ model ComplaintStageChange {
 
 Stage management endpoints:
 
-```
+```http
 PATCH /personal/complaints/:id/stage    // move a complaint to a new stage
 ```
 
